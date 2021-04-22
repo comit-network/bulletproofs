@@ -11,10 +11,22 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
-use digest::{ExtendableOutput, Input, XofReader};
-use rand_core::OsRng;
-use sha3::{Sha3XofReader, Shake256};
+use hash_edwards_to_edwards::hash_to_point;
+use tiny_keccak::{Hasher, Keccak};
 
+lazy_static::lazy_static! {
+    /// Alternate generator of ed25519.
+    ///
+    /// Obtained by hashing `curve25519_dalek::constants::ED25519_BASEPOINT_POINT`.
+    /// Originally used in Monero Ring Confidential Transactions.
+    pub static ref H: EdwardsPoint = {
+        CompressedEdwardsY(hex_literal::hex!(
+            "8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94"
+        ))
+        .decompress()
+        .expect("edwards point")
+    };
+}
 /// Represents a pair of base points for Pedersen commitments.
 ///
 /// The Bulletproofs implementation and API is designed to support
@@ -47,71 +59,6 @@ impl Default for PedersenGens {
             B: ED25519_BASEPOINT_POINT,
             B_blinding: ED25519_BASEPOINT_POINT + ED25519_BASEPOINT_POINT,
         }
-    }
-}
-
-// fn get_exponent(bytes: [u8; 32], idx: usize)
-// {
-//     let domain_separator = "bulletproof";
-//
-//     let hashed = String::from_utf8(bytes.to_vec()) + domain_separator.to_string() + idx;
-//     rct::key e;.
-//     ge_p3 e_p3;
-//     hash_to_p3(e_p3, keccak(hashed));
-//     ge_p3_tobytes(e.bytes, &e_p3);
-//     CHECK_AND_ASSERT_THROW_MES(!(e == rct::identity()), "Exponent is point at infinity");
-//     return e;
-// }
-
-/// The `GeneratorsChain` creates an arbitrary-long sequence of
-/// orthogonal generators.  The sequence can be deterministically
-/// produced starting with an arbitrary point.
-struct GeneratorsChain {
-    reader: Sha3XofReader,
-}
-
-impl GeneratorsChain {
-    /// Creates a chain of generators, determined by the hash of `label`.
-    fn new(label: &[u8]) -> Self {
-        let mut shake = Shake256::default();
-        shake.input(b"GeneratorsChain");
-        shake.input(label);
-
-        GeneratorsChain {
-            reader: shake.xof_result(),
-        }
-    }
-
-    /// Advances the reader n times, squeezing and discarding
-    /// the result.
-    fn fast_forward(mut self, n: usize) -> Self {
-        for _ in 0..n {
-            let mut buf = [0u8; 64];
-            self.reader.read(&mut buf);
-        }
-        self
-    }
-}
-
-impl Default for GeneratorsChain {
-    fn default() -> Self {
-        Self::new(&[])
-    }
-}
-
-impl Iterator for GeneratorsChain {
-    type Item = EdwardsPoint;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // todo!: this could cause problems!
-        let mut uniform_bytes = [0u8; 64];
-        self.reader.read(&mut uniform_bytes);
-        CompressedEdwardsY::from_slice(&uniform_bytes[0..32]).decompress();
-        Option::from(Scalar::random(&mut OsRng) * ED25519_BASEPOINT_POINT)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (usize::max_value(), None)
     }
 }
 
@@ -168,12 +115,39 @@ impl BulletproofGens {
     ///    produce an aggregated proof.
     pub fn new(gens_capacity: usize, party_capacity: usize) -> Self {
         let mut gens = BulletproofGens {
-            gens_capacity: 0,
+            gens_capacity,
             party_capacity,
-            G_vec: (0..party_capacity).map(|_| Vec::new()).collect(),
-            H_vec: (0..party_capacity).map(|_| Vec::new()).collect(),
+            G_vec: Vec::new(),
+            H_vec: Vec::new(),
         };
-        gens.increase_capacity(gens_capacity);
+
+        for i in 0..party_capacity {
+            gens.G_vec.push(Vec::new());
+            for j in 0..gens_capacity {
+                let mut keccak = Keccak::v256();
+                keccak.update(H.compress().as_bytes());
+                keccak.update(b"bulletproof");
+                keccak.update(&((i * j * 2) as u32).to_le_bytes());
+                let mut output = [0u8; 32];
+                keccak.finalize(&mut output);
+                let edwards_point = hash_to_point(&output);
+                gens.G_vec[i].push(edwards_point);
+            }
+        }
+
+        for i in 0..party_capacity {
+            gens.H_vec.push(Vec::new());
+            for j in 0..gens_capacity {
+                let mut keccak = Keccak::v256();
+                keccak.update(H.compress().as_bytes());
+                keccak.update(b"bulletproof");
+                keccak.update(&(((i * j + 1) * 2) as u32).to_le_bytes());
+                let mut output = [0u8; 32];
+                keccak.finalize(&mut output);
+                let edwards_point = hash_to_point(&output);
+                gens.H_vec[i].push(edwards_point);
+            }
+        }
         gens
     }
 
@@ -184,38 +158,6 @@ impl BulletproofGens {
             gens: &self,
             share: j,
         }
-    }
-
-    /// Increases the generators' capacity to the amount specified.
-    /// If less than or equal to the current capacity, does nothing.
-    pub fn increase_capacity(&mut self, new_capacity: usize) {
-        use byteorder::{ByteOrder, LittleEndian};
-
-        if self.gens_capacity >= new_capacity {
-            return;
-        }
-
-        for i in 0..self.party_capacity {
-            let party_index = i as u32;
-            let mut label = [b'G', 0, 0, 0, 0];
-            LittleEndian::write_u32(&mut label[1..5], party_index);
-            self.G_vec[i].extend(
-                &mut GeneratorsChain::new(&label)
-                    .fast_forward(self.gens_capacity)
-                    .take(new_capacity - self.gens_capacity),
-            );
-
-            dbg!(new_capacity - self.gens_capacity);
-            dbg!(&self.G_vec[i]);
-
-            label[0] = b'H';
-            self.H_vec[i].extend(
-                &mut GeneratorsChain::new(&label)
-                    .fast_forward(self.gens_capacity)
-                    .take(new_capacity - self.gens_capacity),
-            );
-        }
-        self.gens_capacity = new_capacity;
     }
 
     /// Return an iterator over the aggregation of the parties' G generators with given size `n`.
@@ -344,28 +286,5 @@ mod tests {
         helper(16, 4);
         helper(16, 2);
         helper(16, 1);
-    }
-
-    #[test]
-    fn resizing_small_gens_matches_creating_bigger_gens() {
-        let gens = BulletproofGens::new(64, 8);
-
-        let mut gen_resized = BulletproofGens::new(32, 8);
-        gen_resized.increase_capacity(64);
-
-        let helper = |n: usize, m: usize| {
-            let gens_G: Vec<EdwardsPoint> = gens.G(n, m).cloned().collect();
-            let gens_H: Vec<EdwardsPoint> = gens.H(n, m).cloned().collect();
-
-            let resized_G: Vec<EdwardsPoint> = gen_resized.G(n, m).cloned().collect();
-            let resized_H: Vec<EdwardsPoint> = gen_resized.H(n, m).cloned().collect();
-
-            assert_eq!(gens_G, resized_G);
-            assert_eq!(gens_H, resized_H);
-        };
-
-        helper(64, 8);
-        helper(32, 8);
-        helper(16, 8);
     }
 }

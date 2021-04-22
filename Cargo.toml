@@ -30,6 +30,10 @@ serde_derive = { version = "1", default-features = false }
 thiserror = { version = "1", optional = true }
 merlin = { version = "2", default-features = false }
 clear_on_drop = { version = "0.2", default-features = false }
+tiny-keccak = { version = "2", features = ["keccak"] }
+hex-literal = "0.3"
+hash_edwards_to_edwards = { git = "https://github.com/comit-network/hash_edwards_to_edwards" }
+lazy_static = "1.4"
 
 [dev-dependencies]
 hex = "0.3"
