@@ -596,6 +596,8 @@ fn delta(n: usize, m: usize, y: &Scalar, z: &Scalar) -> Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use monero::consensus::Decodable;
+    use monero::util::ringct::Bulletproof;
 
     #[test]
     fn test_delta() {
@@ -679,6 +681,71 @@ mod tests {
             assert!(proof
                 .verify_multiple(&bp_gens, &pc_gens, &mut transcript, &value_commitments, n)
                 .is_ok());
+        }
+    }
+
+    #[test]
+    fn verify_monero() {
+        use monero::consensus::deserialize;
+        let mut hex = hex::decode("94a29f80580e57f2abfd26786f6cb3cbfe86c0a339b6f8b04649075207a31229bb7b91f6661ba58d532a8c8fe7dfce004ec729cb8af8205c14f49755ad2fb05c9deeec330068163d76e9d71f0590d0d4c69c4a6360bbf3a869ac81f383ebd0ce55700ff0453681c3984055b6b9809319b97ac9ee692c2ddb595e9f0623d818004870aa4ecb31c0605b533c8501604464275226b145acbeccff50866744d65d0da04cfe116f206adb2a8823798f20537126bb2fb7abbdd1c6b7a37b3e98012c0007d388bf8830965158b98f93a3f2cfbf2adbfe2d35b51552224ccafdb9b70583550def81d198f99dd81762a9b032813b123aeba129f8c7c137efb708335a61d2b32ca8576d1a77aa71a6a0565068e86f78b56d91deb86fabf803e9390e81461b1f5ff32e3a614b9b639fdc8c39c5604455e991ef4ac2b5626c6e99f6d7813ccfd2eaf0bd51845f43c2c681aba12e18ac9d367f593905b4cb8546aaed4cffd29a3f974b44718faa2fd23010eb6a65f59d33fd88d73b92e05ac26657855003e60f998c4fe38fc4a27b0d0690e607569d6e6e26cf0f1645f6bbec09c5e30c259ca78d07d020520baa0498dc65125c0063142a3e57704b3f1d6972d6c0e0da569987944d537b7ec7a271c02ea22a362a6b7a229c77c4836ddd62fa8e7151379b6281bf37a976842ec7abe7c4d7245ec891cb95ffd1ad00932186062229d8a784017e897f55287c5cd914e94765e2d6c6afd709dd309f83e66e15dca4fb6139584f87affe92836f7560b1428dd745496d769b2ff6333068d69f0b7a97836c271d08c7a394f1ef2071b492b3ea1583a4e6f056b2ea9ffbcf9085be466f9a0dc1f85cdb260a544f183c38b6a748c23cac81808c38e826be35fde200a95f5d742f5655fa57db43c13fd0578bd571e486a07858f9846479cad5b2758abcf1a4ef0ed59d96ab0ef23676bab9935a60b648378a1d343c9069630456e0f90906c5dd4d134f1bce00c6086a0238ebe8fbfe2f03d1eef8e01d1b09066430fe6f0963df625bb57e5a08").unwrap();
+        let monero = deserialize::<monero::util::ringct::Bulletproof>(&hex).unwrap();
+
+        let range_proof = RangeProof {
+            A: CompressedEdwardsY::from_slice(&monero.A.key),
+            S: CompressedEdwardsY::from_slice(&monero.S.key),
+            T_1: CompressedEdwardsY::from_slice(&monero.T1.key),
+            T_2: CompressedEdwardsY::from_slice(&monero.T2.key),
+            t_x: Scalar::from_bytes_mod_order(monero.t.key),
+            t_x_blinding: Scalar::from_bytes_mod_order(monero.taux.key),
+            e_blinding: Scalar::from_bytes_mod_order(monero.mu.key),
+            ipp_proof: InnerProductProof {
+                L_vec: monero
+                    .L
+                    .iter()
+                    .map(|k| CompressedEdwardsY::from_slice(&k.key))
+                    .collect(),
+                R_vec: monero
+                    .R
+                    .iter()
+                    .map(|k| CompressedEdwardsY::from_slice(&k.key))
+                    .collect(),
+                a: Scalar::from_bytes_mod_order(monero.a.key),
+                b: Scalar::from_bytes_mod_order(monero.b.key),
+            },
+        };
+
+        let value_commitments = vec![
+            CompressedEdwardsY::from_slice(
+                hex::decode("80e8359f32f51394219f814bc4476fe8bde75d05a28acd5a13ed8945335e508d")
+                    .unwrap()
+                    .as_slice(),
+            ),
+            CompressedEdwardsY::from_slice(
+                hex::decode("2cf69e164ddd4cd02a9d01655a2c0e2b265b8ef58ca060dd617c2a6a30fe2811")
+                    .unwrap()
+                    .as_slice(),
+            ),
+        ];
+
+        let n = 64;
+        // Verifier's scope
+        {
+            // 4. Verify with the same customization label as above
+            let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
+
+            let max_bitsize = 64;
+            let max_parties = 8;
+            let pc_gens = PedersenGens::default();
+            let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
+
+            assert!(dbg!(range_proof.verify_multiple(
+                &bp_gens,
+                &pc_gens,
+                &mut transcript,
+                &value_commitments,
+                n
+            ))
+            .is_ok());
         }
     }
 

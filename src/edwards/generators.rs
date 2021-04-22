@@ -57,7 +57,7 @@ impl Default for PedersenGens {
     fn default() -> Self {
         PedersenGens {
             B: ED25519_BASEPOINT_POINT,
-            B_blinding: ED25519_BASEPOINT_POINT + ED25519_BASEPOINT_POINT,
+            B_blinding: *H,
         }
     }
 }

@@ -34,6 +34,7 @@ tiny-keccak = { version = "2", features = ["keccak"] }
 hex-literal = "0.3"
 hash_edwards_to_edwards = { git = "https://github.com/comit-network/hash_edwards_to_edwards" }
 lazy_static = "1.4"
+monero = "0.11"
 
 [dev-dependencies]
 hex = "0.3"
