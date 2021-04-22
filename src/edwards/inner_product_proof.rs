@@ -426,19 +426,19 @@ pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
 mod tests {
     use super::*;
 
+    use crate::edwards::generators::BulletproofGens;
     use crate::util;
-    use sha3::Sha3_512;
+    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 
     fn test_helper_create(n: usize) {
         let mut rng = rand::thread_rng();
 
-        use crate::generators::BulletproofGens;
         let bp_gens = BulletproofGens::new(n, 1);
         let G: Vec<EdwardsPoint> = bp_gens.share(0).G(n).cloned().collect();
         let H: Vec<EdwardsPoint> = bp_gens.share(0).H(n).cloned().collect();
 
         // Q would be determined upstream in the protocol, so we pick a random one.
-        let Q = EdwardsPoint::hash_from_bytes::<Sha3_512>(b"test point");
+        let Q = ED25519_BASEPOINT_POINT * Scalar::from(6u32);
 
         // a and b are the vectors for which we want to prove c = <a,b>
         let a: Vec<_> = (0..n).map(|_| Scalar::random(&mut rng)).collect();

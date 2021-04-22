@@ -598,8 +598,6 @@ fn delta(n: usize, m: usize, y: &Scalar, z: &Scalar) -> Scalar {
 mod tests {
     use super::*;
 
-    use crate::generators::PedersenGens;
-
     #[test]
     fn test_delta() {
         let mut rng = rand::thread_rng();

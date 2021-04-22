@@ -7,13 +7,13 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use curve25519_dalek::constants::{ED25519_BASEPOINT_COMPRESSED, ED25519_BASEPOINT_POINT};
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
 use digest::{ExtendableOutput, Input, XofReader};
-use sha3::{Sha3XofReader, Sha3_512, Shake256};
+use rand_core::OsRng;
+use sha3::{Sha3XofReader, Shake256};
 
 /// Represents a pair of base points for Pedersen commitments.
 ///
@@ -45,13 +45,23 @@ impl Default for PedersenGens {
     fn default() -> Self {
         PedersenGens {
             B: ED25519_BASEPOINT_POINT,
-            B_blinding: unimplemented!(),
-            // EdwardsPoint::hash_from_bytes::<Sha3_512>(
-            //     ED25519_BASEPOINT_COMPRESSED.as_bytes(),
-            // ),
+            B_blinding: ED25519_BASEPOINT_POINT + ED25519_BASEPOINT_POINT,
         }
     }
 }
+
+// fn get_exponent(bytes: [u8; 32], idx: usize)
+// {
+//     let domain_separator = "bulletproof";
+//
+//     let hashed = String::from_utf8(bytes.to_vec()) + domain_separator.to_string() + idx;
+//     rct::key e;.
+//     ge_p3 e_p3;
+//     hash_to_p3(e_p3, keccak(hashed));
+//     ge_p3_tobytes(e.bytes, &e_p3);
+//     CHECK_AND_ASSERT_THROW_MES(!(e == rct::identity()), "Exponent is point at infinity");
+//     return e;
+// }
 
 /// The `GeneratorsChain` creates an arbitrary-long sequence of
 /// orthogonal generators.  The sequence can be deterministically
@@ -94,9 +104,10 @@ impl Iterator for GeneratorsChain {
 
     fn next(&mut self) -> Option<Self::Item> {
         // todo!: this could cause problems!
-        let mut uniform_bytes = [0u8; 32];
+        let mut uniform_bytes = [0u8; 64];
         self.reader.read(&mut uniform_bytes);
-        CompressedEdwardsY::from_slice(&uniform_bytes).decompress()
+        CompressedEdwardsY::from_slice(&uniform_bytes[0..32]).decompress();
+        Option::from(Scalar::random(&mut OsRng) * ED25519_BASEPOINT_POINT)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -130,7 +141,7 @@ impl Iterator for GeneratorsChain {
 /// chain, and even forward-compatible to multiparty aggregation of
 /// constraint system proofs, since the generators are namespaced by
 /// their party index.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BulletproofGens {
     /// The maximum number of usable generators for each party.
     pub gens_capacity: usize,
@@ -193,6 +204,9 @@ impl BulletproofGens {
                     .fast_forward(self.gens_capacity)
                     .take(new_capacity - self.gens_capacity),
             );
+
+            dbg!(new_capacity - self.gens_capacity);
+            dbg!(&self.G_vec[i]);
 
             label[0] = b'H';
             self.H_vec[i].extend(
