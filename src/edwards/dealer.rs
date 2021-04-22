@@ -10,14 +10,14 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use curve25519_dalek::ristretto::RistrettoPoint;
+use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
+use crate::edwards::generators::{BulletproofGens, PedersenGens};
+use crate::edwards::inner_product_proof;
 use crate::edwards::RangeProof;
 use crate::errors::MPCError;
-use crate::generators::{BulletproofGens, PedersenGens};
-use crate::inner_product_proof;
 use crate::transcript::TranscriptProtocol;
 
 use rand_core::{CryptoRng, RngCore};
@@ -109,10 +109,10 @@ impl<'a, 'b> DealerAwaitingBitCommitments<'a, 'b> {
         }
 
         // Commit aggregated A_j, S_j
-        let A: RistrettoPoint = bit_commitments.iter().map(|vc| vc.A_j).sum();
+        let A: EdwardsPoint = bit_commitments.iter().map(|vc| vc.A_j).sum();
         self.transcript.append_point(b"A", &A.compress());
 
-        let S: RistrettoPoint = bit_commitments.iter().map(|vc| vc.S_j).sum();
+        let S: EdwardsPoint = bit_commitments.iter().map(|vc| vc.S_j).sum();
         self.transcript.append_point(b"S", &S.compress());
 
         let y = self.transcript.challenge_scalar(b"y");
@@ -149,9 +149,9 @@ pub struct DealerAwaitingPolyCommitments<'a, 'b> {
     bit_challenge: BitChallenge,
     bit_commitments: Vec<BitCommitment>,
     /// Aggregated commitment to the parties' bits
-    A: RistrettoPoint,
+    A: EdwardsPoint,
     /// Aggregated commitment to the parties' bit blindings
-    S: RistrettoPoint,
+    S: EdwardsPoint,
 }
 
 impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
@@ -166,8 +166,8 @@ impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
         }
 
         // Commit sums of T_1_j's and T_2_j's
-        let T_1: RistrettoPoint = poly_commitments.iter().map(|pc| pc.T_1_j).sum();
-        let T_2: RistrettoPoint = poly_commitments.iter().map(|pc| pc.T_2_j).sum();
+        let T_1: EdwardsPoint = poly_commitments.iter().map(|pc| pc.T_1_j).sum();
+        let T_2: EdwardsPoint = poly_commitments.iter().map(|pc| pc.T_2_j).sum();
 
         self.transcript.append_point(b"T_1", &T_1.compress());
         self.transcript.append_point(b"T_2", &T_2.compress());
@@ -211,10 +211,10 @@ pub struct DealerAwaitingProofShares<'a, 'b> {
     bit_commitments: Vec<BitCommitment>,
     poly_challenge: PolyChallenge,
     poly_commitments: Vec<PolyCommitment>,
-    A: RistrettoPoint,
-    S: RistrettoPoint,
-    T_1: RistrettoPoint,
-    T_2: RistrettoPoint,
+    A: EdwardsPoint,
+    S: EdwardsPoint,
+    T_1: EdwardsPoint,
+    T_2: EdwardsPoint,
 }
 
 impl<'a, 'b> DealerAwaitingProofShares<'a, 'b> {

@@ -8,17 +8,17 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::iter;
-use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 
-use crate::generators::{BulletproofGens, PedersenGens};
+use crate::edwards::generators::{BulletproofGens, PedersenGens};
 
 /// A commitment to the bits of a party's value.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct BitCommitment {
-    pub(super) V_j: CompressedRistretto,
-    pub(super) A_j: RistrettoPoint,
-    pub(super) S_j: RistrettoPoint,
+    pub(super) V_j: CompressedEdwardsY,
+    pub(super) A_j: EdwardsPoint,
+    pub(super) S_j: EdwardsPoint,
 }
 
 /// Challenge values derived from all parties' [`BitCommitment`]s.
@@ -31,8 +31,8 @@ pub struct BitChallenge {
 /// A commitment to a party's polynomial coefficents.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct PolyCommitment {
-    pub(super) T_1_j: RistrettoPoint,
-    pub(super) T_2_j: RistrettoPoint,
+    pub(super) T_1_j: EdwardsPoint,
+    pub(super) T_2_j: EdwardsPoint,
 }
 
 /// Challenge values derived from all parties' [`PolyCommitment`]s.
@@ -125,7 +125,7 @@ impl ProofShare {
                 z + exp_y_inv * y_jn_inv * (-r_i) + exp_y_inv * y_jn_inv * (zz * z_j * exp_2)
             });
 
-        let P_check = RistrettoPoint::vartime_multiscalar_mul(
+        let P_check = EdwardsPoint::vartime_multiscalar_mul(
             iter::once(Scalar::one())
                 .chain(iter::once(*x))
                 .chain(iter::once(-self.e_blinding))
@@ -146,7 +146,7 @@ impl ProofShare {
         let sum_of_powers_y = util::sum_of_powers(&y, n);
         let sum_of_powers_2 = util::sum_of_powers(&Scalar::from(2u64), n);
         let delta = (z - zz) * sum_of_powers_y * y_jn - z * zz * sum_of_powers_2 * z_j;
-        let t_check = RistrettoPoint::vartime_multiscalar_mul(
+        let t_check = EdwardsPoint::vartime_multiscalar_mul(
             iter::once(zz * z_j)
                 .chain(iter::once(*x))
                 .chain(iter::once(x * x))

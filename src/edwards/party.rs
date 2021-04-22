@@ -15,13 +15,13 @@ extern crate alloc;
 use alloc::vec::Vec;
 use clear_on_drop::clear::Clear;
 use core::iter;
-use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
 use rand_core::{CryptoRng, RngCore};
 
+use crate::edwards::generators::{BulletproofGens, PedersenGens};
 use crate::errors::MPCError;
-use crate::generators::{BulletproofGens, PedersenGens};
 use crate::util;
 
 #[cfg(feature = "std")]
@@ -68,7 +68,7 @@ pub struct PartyAwaitingPosition<'a> {
     n: usize,
     v: u64,
     v_blinding: Scalar,
-    V: CompressedRistretto,
+    V: CompressedEdwardsY,
 }
 
 impl<'a> PartyAwaitingPosition<'a> {
@@ -116,7 +116,7 @@ impl<'a> PartyAwaitingPosition<'a> {
         let s_R: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
 
         // Compute S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
-        let S = RistrettoPoint::multiscalar_mul(
+        let S = EdwardsPoint::multiscalar_mul(
             iter::once(&s_blinding).chain(s_L.iter()).chain(s_R.iter()),
             iter::once(&self.pc_gens.B_blinding)
                 .chain(bp_share.G(self.n))

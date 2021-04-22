@@ -11,16 +11,16 @@ use alloc::vec::Vec;
 
 use core::iter;
 
-use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::{IsIdentity, VartimeMultiscalarMul};
 use merlin::Transcript;
 
 use crate::errors::ProofError;
-use crate::generators::{BulletproofGens, PedersenGens};
-use crate::inner_product_proof::InnerProductProof;
 use crate::transcript::TranscriptProtocol;
 use crate::util;
+use generators::{BulletproofGens, PedersenGens};
+use inner_product_proof::InnerProductProof;
 
 use rand_core::{CryptoRng, RngCore};
 use serde::de::Visitor;
@@ -29,6 +29,8 @@ use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
 // Modules for MPC protocol
 
 pub mod dealer;
+mod generators;
+mod inner_product_proof;
 pub mod messages;
 pub mod party;
 
@@ -58,13 +60,13 @@ pub mod party;
 #[derive(Clone, Debug)]
 pub struct RangeProof {
     /// Commitment to the bits of the value
-    A: CompressedRistretto,
+    A: CompressedEdwardsY,
     /// Commitment to the blinding factors
-    S: CompressedRistretto,
+    S: CompressedEdwardsY,
     /// Commitment to the \\(t_1\\) coefficient of \\( t(x) \\)
-    T_1: CompressedRistretto,
+    T_1: CompressedEdwardsY,
     /// Commitment to the \\(t_2\\) coefficient of \\( t(x) \\)
-    T_2: CompressedRistretto,
+    T_2: CompressedEdwardsY,
     /// Evaluation of the polynomial \\(t(x)\\) at the challenge point \\(x\\)
     t_x: Scalar,
     /// Blinding factor for the synthetic commitment to \\(t(x)\\)
@@ -140,7 +142,7 @@ impl RangeProof {
         v_blinding: &Scalar,
         n: usize,
         rng: &mut T,
-    ) -> Result<(RangeProof, CompressedRistretto), ProofError> {
+    ) -> Result<(RangeProof, CompressedEdwardsY), ProofError> {
         let (p, Vs) = RangeProof::prove_multiple_with_rng(
             bp_gens,
             pc_gens,
@@ -165,7 +167,7 @@ impl RangeProof {
         v: u64,
         v_blinding: &Scalar,
         n: usize,
-    ) -> Result<(RangeProof, CompressedRistretto), ProofError> {
+    ) -> Result<(RangeProof, CompressedEdwardsY), ProofError> {
         RangeProof::prove_single_with_rng(
             bp_gens,
             pc_gens,
@@ -239,7 +241,7 @@ impl RangeProof {
         blindings: &[Scalar],
         n: usize,
         rng: &mut T,
-    ) -> Result<(RangeProof, Vec<CompressedRistretto>), ProofError> {
+    ) -> Result<(RangeProof, Vec<CompressedEdwardsY>), ProofError> {
         use self::dealer::*;
         use self::party::*;
 
@@ -298,7 +300,7 @@ impl RangeProof {
         values: &[u64],
         blindings: &[Scalar],
         n: usize,
-    ) -> Result<(RangeProof, Vec<CompressedRistretto>), ProofError> {
+    ) -> Result<(RangeProof, Vec<CompressedEdwardsY>), ProofError> {
         RangeProof::prove_multiple_with_rng(
             bp_gens,
             pc_gens,
@@ -318,7 +320,7 @@ impl RangeProof {
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
         transcript: &mut Transcript,
-        V: &CompressedRistretto,
+        V: &CompressedEdwardsY,
         n: usize,
         rng: &mut T,
     ) -> Result<(), ProofError> {
@@ -335,7 +337,7 @@ impl RangeProof {
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
         transcript: &mut Transcript,
-        V: &CompressedRistretto,
+        V: &CompressedEdwardsY,
         n: usize,
     ) -> Result<(), ProofError> {
         self.verify_single_with_rng(bp_gens, pc_gens, transcript, V, n, &mut thread_rng())
@@ -347,7 +349,7 @@ impl RangeProof {
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
         transcript: &mut Transcript,
-        value_commitments: &[CompressedRistretto],
+        value_commitments: &[CompressedEdwardsY],
         n: usize,
         rng: &mut T,
     ) -> Result<(), ProofError> {
@@ -418,7 +420,7 @@ impl RangeProof {
         let value_commitment_scalars = util::exp_iter(z).take(m).map(|z_exp| c * zz * z_exp);
         let basepoint_scalar = w * (self.t_x - a * b) + c * (delta(n, m, &y, &z) - self.t_x);
 
-        let mega_check = RistrettoPoint::optional_multiscalar_mul(
+        let mega_check = EdwardsPoint::optional_multiscalar_mul(
             iter::once(Scalar::one())
                 .chain(iter::once(x))
                 .chain(iter::once(c * x))
@@ -460,7 +462,7 @@ impl RangeProof {
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
         transcript: &mut Transcript,
-        value_commitments: &[CompressedRistretto],
+        value_commitments: &[CompressedEdwardsY],
         n: usize,
     ) -> Result<(), ProofError> {
         self.verify_multiple_with_rng(
@@ -511,10 +513,10 @@ impl RangeProof {
 
         use crate::util::read32;
 
-        let A = CompressedRistretto(read32(&slice[0 * 32..]));
-        let S = CompressedRistretto(read32(&slice[1 * 32..]));
-        let T_1 = CompressedRistretto(read32(&slice[2 * 32..]));
-        let T_2 = CompressedRistretto(read32(&slice[3 * 32..]));
+        let A = CompressedEdwardsY(read32(&slice[0 * 32..]));
+        let S = CompressedEdwardsY(read32(&slice[1 * 32..]));
+        let T_1 = CompressedEdwardsY(read32(&slice[2 * 32..]));
+        let T_2 = CompressedEdwardsY(read32(&slice[3 * 32..]));
 
         let t_x = Scalar::from_canonical_bytes(read32(&slice[4 * 32..]))
             .ok_or(ProofError::FormatError)?;
