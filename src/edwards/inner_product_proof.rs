@@ -10,6 +10,7 @@ use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 use merlin::Transcript;
+use tiny_keccak::{Hasher, Keccak};
 
 use crate::errors::ProofError;
 use crate::transcript::TranscriptProtocol;
@@ -36,6 +37,7 @@ impl InnerProductProof {
     /// either 0 or a power of 2.
     pub fn create(
         transcript: &mut Transcript,
+        w: &Scalar,
         Q: &EdwardsPoint,
         G_factors: &[Scalar],
         H_factors: &[Scalar],
@@ -65,12 +67,11 @@ impl InnerProductProof {
         // All of the input vectors must have a length that is a power of two.
         assert!(n.is_power_of_two());
 
-        transcript.innerproduct_domain_sep(n as u64);
-
         let lg_n = n.next_power_of_two().trailing_zeros() as usize;
         let mut L_vec = Vec::with_capacity(lg_n);
         let mut R_vec = Vec::with_capacity(lg_n);
 
+        let mut keccak = Keccak::v256();
         // If it's the first iteration, unroll the Hprime = H*y_inv scalar mults
         // into multiscalar muls, for performance.
         if n != 1 {
@@ -114,10 +115,13 @@ impl InnerProductProof {
             L_vec.push(L);
             R_vec.push(R);
 
-            transcript.append_point(b"L", &L);
-            transcript.append_point(b"R", &R);
+            keccak.update(w.as_bytes());
+            keccak.update(L.as_bytes());
+            keccak.update(R.as_bytes());
 
-            let u = transcript.challenge_scalar(b"u");
+            let mut u = [0u8; 32];
+            keccak.clone().finalize(&mut u);
+            let u = Scalar::from_bytes_mod_order(u);
             let u_inv = u.invert();
 
             for i in 0..n {
@@ -167,7 +171,13 @@ impl InnerProductProof {
             transcript.append_point(b"L", &L);
             transcript.append_point(b"R", &R);
 
-            let u = transcript.challenge_scalar(b"u");
+            keccak.update(w.as_bytes());
+            keccak.update(L.as_bytes());
+            keccak.update(R.as_bytes());
+
+            let mut u = [0u8; 32];
+            keccak.clone().finalize(&mut u);
+            let u = Scalar::from_bytes_mod_order(u);
             let u_inv = u.invert();
 
             for i in 0..n {
@@ -438,7 +448,8 @@ mod tests {
         let H: Vec<EdwardsPoint> = bp_gens.share(0).H(n).cloned().collect();
 
         // Q would be determined upstream in the protocol, so we pick a random one.
-        let Q = ED25519_BASEPOINT_POINT * Scalar::from(6u32);
+        let w = Scalar::from(6u32);
+        let Q = ED25519_BASEPOINT_POINT * w;
 
         // a and b are the vectors for which we want to prove c = <a,b>
         let a: Vec<_> = (0..n).map(|_| Scalar::random(&mut rng)).collect();
@@ -468,6 +479,7 @@ mod tests {
         let mut verifier = Transcript::new(b"innerproducttest");
         let proof = InnerProductProof::create(
             &mut verifier,
+            &w,
             &Q,
             &G_factors,
             &H_factors,

@@ -33,6 +33,12 @@ mod inner_product_proof;
 pub mod messages;
 pub mod party;
 
+lazy_static::lazy_static! {
+    pub static ref INV_EIGHT: Scalar = {
+        Scalar::from(8u8).invert()
+    };
+}
+
 /// The `RangeProof` struct represents a proof that one or more values
 /// are in a range.
 ///
@@ -298,7 +304,6 @@ impl RangeProof {
 
         let dealer = Dealer::new(bp_gens, pc_gens, transcript, n, values.len())?;
 
-        // TODO: Before creating the commitments we must multiply the value and blinder times INV_EIGHT.
         let parties: Vec<_> = values
             .iter()
             .zip(blindings.iter())

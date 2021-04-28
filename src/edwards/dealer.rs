@@ -185,20 +185,15 @@ impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
         let T_1: EdwardsPoint = poly_commitments.iter().map(|pc| pc.T_1_j).sum();
         let T_2: EdwardsPoint = poly_commitments.iter().map(|pc| pc.T_2_j).sum();
 
-        self.transcript.append_point(b"T_1", &T_1.compress());
-        self.transcript.append_point(b"T_2", &T_2.compress());
+        let mut keccak = Keccak::v256();
+        keccak.update(self.bit_challenge.z.as_bytes());
+        keccak.update(self.bit_challenge.z.as_bytes());
+        keccak.update(T_1.compress().as_bytes());
+        keccak.update(T_2.compress().as_bytes());
+        let mut x = [0u8; 32];
+        keccak.finalize(&mut x);
+        let x = Scalar::from_bytes_mod_order(x);
 
-        // TODO: Challenge scalar x comes from hash(hash(y), z, T_1,
-        // T_2). It's weird because hash(y) == z, so we should verify
-        // this. Currently the transcript indirectly holds y and z,
-        // but maybe we should pass them in instead.
-        //
-        // Actually, it looks like we could benefit from implementing
-        // the TranscriptProtocol trait ourselves, because this
-        // accumulation of different public data when producing
-        // different challenges also occurs in Monero
-
-        let x = self.transcript.challenge_scalar(b"x");
         let poly_challenge = PolyChallenge { x };
 
         Ok((
@@ -272,13 +267,17 @@ impl<'a, 'b> DealerAwaitingProofShares<'a, 'b> {
         let t_x_blinding: Scalar = proof_shares.iter().map(|ps| ps.t_x_blinding).sum();
         let e_blinding: Scalar = proof_shares.iter().map(|ps| ps.e_blinding).sum();
 
-        self.transcript.append_scalar(b"t_x", &t_x);
-        self.transcript
-            .append_scalar(b"t_x_blinding", &t_x_blinding);
-        self.transcript.append_scalar(b"e_blinding", &e_blinding);
-
         // Get a challenge value to combine statements for the IPP
-        let w = self.transcript.challenge_scalar(b"w");
+        let mut keccak = Keccak::v256();
+        keccak.update(self.poly_challenge.x.as_bytes());
+        keccak.update(self.poly_challenge.x.as_bytes());
+        keccak.update(t_x_blinding.as_bytes());
+        keccak.update(e_blinding.as_bytes());
+        keccak.update(t_x.as_bytes());
+        let mut w = [0u8; 32];
+        keccak.finalize(&mut w);
+        // TODO: Monero checks if w is equal to zero and aborts if so (bulletproof.cc:720)
+        let w = Scalar::from_bytes_mod_order(w);
         let Q = w * self.pc_gens.B;
 
         let G_factors: Vec<Scalar> = iter::repeat(Scalar::one()).take(self.n * self.m).collect();
@@ -297,6 +296,7 @@ impl<'a, 'b> DealerAwaitingProofShares<'a, 'b> {
 
         let ipp_proof = inner_product_proof::InnerProductProof::create(
             self.transcript,
+            &w,
             &Q,
             &G_factors,
             &H_factors,

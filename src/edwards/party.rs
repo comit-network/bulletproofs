@@ -20,9 +20,13 @@ use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::edwards::generators::{BulletproofGens, PedersenGens};
+use crate::edwards::INV_EIGHT;
 use crate::errors::MPCError;
 use crate::util;
+use crate::{
+    edwards::generators::{BulletproofGens, PedersenGens},
+    util::Poly2,
+};
 
 #[cfg(feature = "std")]
 use rand::thread_rng;
@@ -48,7 +52,9 @@ impl Party {
             return Err(MPCError::InvalidGeneratorsLength);
         }
 
-        let V = pc_gens.commit(v.into(), v_blinding).compress();
+        let v_8 = Scalar::from(v) * *INV_EIGHT;
+        let v_blinding_8 = Scalar::from(v_blinding) * *INV_EIGHT;
+        let V = pc_gens.commit(v_8, v_blinding_8).compress();
 
         Ok(PartyAwaitingPosition {
             bp_gens,
@@ -89,16 +95,13 @@ impl<'a> PartyAwaitingPosition<'a> {
         j: usize,
         rng: &mut T,
     ) -> Result<(PartyAwaitingBitChallenge<'a>, BitCommitment), MPCError> {
-        // TODO: Promote this to a constant
-        let inv_eight = Scalar::from(8u8).invert();
-
         if self.bp_gens.party_capacity <= j {
             return Err(MPCError::InvalidGeneratorsLength);
         }
 
         let bp_share = self.bp_gens.share(j);
 
-        let a_blinding = Scalar::random(rng) * inv_eight;
+        let a_blinding = Scalar::random(rng) * *INV_EIGHT;
 
         // Compute A = <a_L, G> + <a_R, H> + a_blinding * B_blinding
         let mut A = self.pc_gens.B_blinding * a_blinding;
@@ -111,7 +114,7 @@ impl<'a> PartyAwaitingPosition<'a> {
             let v_i = Choice::from(((self.v >> i) & 1) as u8);
             let mut point = -H_i;
             point.conditional_assign(G_i, v_i);
-            A += point * Scalar::from(8u8).invert();
+            A += point * *INV_EIGHT;
             i += 1;
         }
 
@@ -127,7 +130,7 @@ impl<'a> PartyAwaitingPosition<'a> {
                 .chain(bp_share.G(self.n))
                 .chain(bp_share.H(self.n)),
         );
-        let S = S * inv_eight;
+        let S = S * *INV_EIGHT;
 
         // Return next state and all commitments
         let bit_commitment = BitCommitment {
@@ -219,8 +222,12 @@ impl<'a> PartyAwaitingBitChallenge<'a> {
         // Generate x by committing to T_1, T_2 (line 49-54)
         let t_1_blinding = Scalar::random(rng);
         let t_2_blinding = Scalar::random(rng);
-        let T_1 = self.pc_gens.commit(t_poly.1, t_1_blinding);
-        let T_2 = self.pc_gens.commit(t_poly.2, t_2_blinding);
+        let T_1 = self
+            .pc_gens
+            .commit(t_poly.1 * *INV_EIGHT, t_1_blinding * *INV_EIGHT);
+        let T_2 = self
+            .pc_gens
+            .commit(t_poly.2 * *INV_EIGHT, t_2_blinding * *INV_EIGHT);
 
         let poly_commitment = PolyCommitment {
             T_1_j: T_1,
