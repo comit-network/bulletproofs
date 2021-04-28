@@ -1,12 +1,12 @@
 [package]
 name = "bulletproofs"
 # Before doing a release:
-# - update version field 
+# - update version field
 # - update html_root_url
 # - ensure yoloproofs was disabled in an atomic (revertable) commit
 # - update CHANGELOG
 version = "2.0.0"
-authors = ["Cathie Yun <cathieyun@gmail.com>", 
+authors = ["Cathie Yun <cathieyun@gmail.com>",
            "Henry de Valence <hdevalence@hdevalence.ca>",
            "Oleg Andreev <oleganza@gmail.com>"]
 readme = "README.md"
@@ -31,16 +31,19 @@ thiserror = { version = "1", optional = true }
 merlin = { version = "2", default-features = false }
 clear_on_drop = { version = "0.2", default-features = false }
 tiny-keccak = { version = "2", features = ["keccak"] }
+hex = "0.3"
 hex-literal = "0.3"
 hash_edwards_to_edwards = { git = "https://github.com/comit-network/hash_edwards_to_edwards" }
 lazy_static = "1.4"
-monero = "0.11"
+monero = { version = "0.11", features = ["serde_support"] }
+integer-encoding = "3"
 
 [dev-dependencies]
 hex = "0.3"
 criterion = "0.3"
 bincode = "1"
 rand_chacha = "0.2"
+serde_json = "1"
 
 [features]
 default = ["std"]

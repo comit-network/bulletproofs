@@ -76,6 +76,54 @@ pub struct RangeProof {
     ipp_proof: InnerProductProof,
 }
 
+impl From<RangeProof> for monero::util::ringct::Bulletproof {
+    fn from(from: RangeProof) -> Self {
+        use monero::util::ringct::Key;
+
+        Self {
+            A: Key {
+                key: from.A.to_bytes(),
+            },
+            S: Key {
+                key: from.S.to_bytes(),
+            },
+            T1: Key {
+                key: from.T_1.to_bytes(),
+            },
+            T2: Key {
+                key: from.T_2.to_bytes(),
+            },
+            taux: Key {
+                key: from.t_x_blinding.to_bytes(),
+            },
+            mu: Key {
+                key: from.e_blinding.to_bytes(),
+            },
+            L: from
+                .ipp_proof
+                .L_vec
+                .iter()
+                .map(|l| Key { key: l.to_bytes() })
+                .collect(),
+            R: from
+                .ipp_proof
+                .R_vec
+                .iter()
+                .map(|r| Key { key: r.to_bytes() })
+                .collect(),
+            a: Key {
+                key: from.ipp_proof.a.to_bytes(),
+            },
+            b: Key {
+                key: from.ipp_proof.a.to_bytes(),
+            },
+            t: Key {
+                key: from.t_x.to_bytes(),
+            },
+        }
+    }
+}
+
 impl RangeProof {
     /// Create a rangeproof for a given pair of value `v` and
     /// blinding scalar `v_blinding`.
@@ -250,6 +298,7 @@ impl RangeProof {
 
         let dealer = Dealer::new(bp_gens, pc_gens, transcript, n, values.len())?;
 
+        // TODO: Before creating the commitments we must multiply the value and blinder times INV_EIGHT.
         let parties: Vec<_> = values
             .iter()
             .zip(blindings.iter())
@@ -596,8 +645,6 @@ fn delta(n: usize, m: usize, y: &Scalar, z: &Scalar) -> Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use monero::consensus::Decodable;
-    use monero::util::ringct::Bulletproof;
 
     #[test]
     fn test_delta() {
@@ -684,122 +731,159 @@ mod tests {
         }
     }
 
+    // #[test]
+    // fn verify_monero() {
+    //     use std::convert::TryInto;
+
+    //     // data from:
+    //     // https://xmrchain.net/tx/591f793429ad098cfed4ef7f7013bc01e3163f2a6b188e56635c3d5fa5c46704/1
+
+    //     let range_proof = RangeProof {
+    //         A: CompressedEdwardsY::from_slice(
+    //             &hex::decode("55fbdad6934e3b71818ad838cc8ca662472d892cc24ebd294677912b12b99b44")
+    //                 .unwrap(),
+    //         ),
+    //         S: CompressedEdwardsY::from_slice(
+    //             &hex::decode("d260f3d26408851379d5a6cc1aefff006f1368d2aa81a63900e6bde723be81cb")
+    //                 .unwrap(),
+    //         ),
+    //         T_1: CompressedEdwardsY::from_slice(
+    //             &hex::decode("d379b7931c267b1502a3a7a25cd0484af920c2834fa31b25652149e9a1387d25")
+    //                 .unwrap(),
+    //         ),
+    //         T_2: CompressedEdwardsY::from_slice(
+    //             &hex::decode("4dc254cce51b8aee743edd446f2ff6abf9099d3c76e1f2853cc902724cac07e9")
+    //                 .unwrap(),
+    //         ),
+    //         t_x: Scalar::from_bytes_mod_order(
+    //             hex::decode("d13537d958637c750fcc2f4b92884fb1c9712513ac5a9e1faebf96939fdae70f")
+    //                 .unwrap()
+    //                 .try_into()
+    //                 .unwrap(),
+    //         ),
+    //         t_x_blinding: Scalar::from_bytes_mod_order(
+    //             hex::decode("8635c6a66573e27192afa95969cb6c646d55d0e33aa5677e4eb32aae0555700f")
+    //                 .unwrap()
+    //                 .try_into()
+    //                 .unwrap(),
+    //         ),
+    //         e_blinding: Scalar::from_bytes_mod_order(
+    //             hex::decode("640dc51e9b284a990c96b62d22e817d3c78b871b31d32ea94d0e3766be26f207")
+    //                 .unwrap()
+    //                 .try_into()
+    //                 .unwrap(),
+    //         ),
+    //         ipp_proof: InnerProductProof {
+    //             L_vec: vec![
+    //                 "419a1d432b714a41beaff4e82b78b7a45f7e557970bdd2340f41c45abf9f09da",
+    //                 "a2b538ad57b72814bc665b496f7097f5918e0e5a6ac6765c04eeb30f0b821379",
+    //                 "dcc03edd8d92c940ce8e1a1f1efb210181bc5679d403f60e7115b1d253b042d0",
+    //                 "57b1af413d8223f36a86714c26670a0848ea441b983919b7f317c94f0b6c6e8f",
+    //                 "bc0e6d3a5dafb6da03925a4fb479986c7b6238031f06b21ed6dce94f02160e9e",
+    //                 "f16bf43722a7452dd94d0c83338855315b69b89ee86a762fc62dc7e792325b11",
+    //                 "1fb1224843b5821553516cf1e341e58d9a7217c5ba03854b7a7863317c6b40d9",
+    //             ]
+    //             .iter()
+    //             .map(|k| CompressedEdwardsY::from_slice(&hex::decode(k).unwrap()))
+    //             .collect(),
+    //             R_vec: vec![
+    //                 "bde422559b62d8742bfbd827c1600f0be73585b483d87f38a5561db79f90eccc",
+    //                 "28af9197e7ae06e99d8a3f116c793aaa0a6dfcf50e4a96c2e18d7b247136cb58",
+    //                 "64e91f543a77037a1854d6ca6ca26b28c882eeeb4561b832bc614700741007ce",
+    //                 "741765b81ea3bb46c46c167c40b84a3c538422f84bcb772d468e730c6e23adf0",
+    //                 "871eebd34c465f5aa851c06a66f64d3f535eb39b185900f89e51d6bc1b276cf2",
+    //                 "cb99b11965b4ae4ca825a7ff44ba37c6ab8c0a3a0d9e3066d03c1f40267c3abe",
+    //                 "07ded027121f2c8284c3bc0955ae84994f826542670ccfea5f5103c763271532",
+    //             ]
+    //             .iter()
+    //             .map(|k| CompressedEdwardsY::from_slice(&hex::decode(k).unwrap()))
+    //             .collect(),
+    //             a: Scalar::from_bytes_mod_order(
+    //                 hex::decode("cbcc8efba5b952c099092cf96eabdbd5cc79b01a3b7af3142bedb5a41484a009")
+    //                     .unwrap()
+    //                     .try_into()
+    //                     .unwrap(),
+    //             ),
+    //             b: Scalar::from_bytes_mod_order(
+    //                 hex::decode("fca7ae4b38482032377eef47d16e4d31f81b1ff33b48aad05775614d00f2b502")
+    //                     .unwrap()
+    //                     .try_into()
+    //                     .unwrap(),
+    //             ),
+    //         },
+    //     };
+
+    //     let value_commitments = vec![
+    //         CompressedEdwardsY::from_slice(
+    //             hex::decode("72b66d33f53793b579a3226d6da55a0cbf22ee7a76ef3156ae86dcabb741a22a")
+    //                 .unwrap()
+    //                 .as_slice(),
+    //         ),
+    //         CompressedEdwardsY::from_slice(
+    //             hex::decode("1e70f838ef2c498181ee546f529c6f5ec68af53700ddf2ad33469af5b6875536")
+    //                 .unwrap()
+    //                 .as_slice(),
+    //         ),
+    //     ];
+
+    //     let n = 64;
+    //     // Verifier's scope
+    //     {
+    //         // 4. Verify with the same customization label as above
+    //         let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
+
+    //         let max_bitsize = 64;
+    //         let max_parties = 16;
+    //         let pc_gens = PedersenGens::default();
+    //         let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
+
+    //         let res = range_proof.verify_multiple(
+    //             &bp_gens,
+    //             &pc_gens,
+    //             &mut transcript,
+    //             &value_commitments,
+    //             n,
+    //         );
+
+    //         dbg!(&res);
+
+    //         assert!(res.is_ok());
+    //     }
+    // }
+
     #[test]
-    fn verify_monero() {
-        use monero::consensus::deserialize;
-        use std::convert::TryInto;
+    fn prove_monero() {
+        let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
 
-        // data from:
-        // https://xmrchain.net/tx/591f793429ad098cfed4ef7f7013bc01e3163f2a6b188e56635c3d5fa5c46704/1
+        let max_bitsize = 64;
+        let max_parties = 16;
+        let pc_gens = PedersenGens::default();
+        let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
+        let v_blinding_0 = Scalar::random(&mut thread_rng());
+        let v_blinding_1 = Scalar::random(&mut thread_rng());
 
-        let range_proof = RangeProof {
-            A: CompressedEdwardsY::from_slice(
-                &hex::decode("55fbdad6934e3b71818ad838cc8ca662472d892cc24ebd294677912b12b99b44")
-                    .unwrap(),
-            ),
-            S: CompressedEdwardsY::from_slice(
-                &hex::decode("d260f3d26408851379d5a6cc1aefff006f1368d2aa81a63900e6bde723be81cb")
-                    .unwrap(),
-            ),
-            T_1: CompressedEdwardsY::from_slice(
-                &hex::decode("d379b7931c267b1502a3a7a25cd0484af920c2834fa31b25652149e9a1387d25")
-                    .unwrap(),
-            ),
-            T_2: CompressedEdwardsY::from_slice(
-                &hex::decode("4dc254cce51b8aee743edd446f2ff6abf9099d3c76e1f2853cc902724cac07e9")
-                    .unwrap(),
-            ),
-            t_x: Scalar::from_bytes_mod_order(
-                hex::decode("d13537d958637c750fcc2f4b92884fb1c9712513ac5a9e1faebf96939fdae70f")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            ),
-            t_x_blinding: Scalar::from_bytes_mod_order(
-                hex::decode("8635c6a66573e27192afa95969cb6c646d55d0e33aa5677e4eb32aae0555700f")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            ),
-            e_blinding: Scalar::from_bytes_mod_order(
-                hex::decode("640dc51e9b284a990c96b62d22e817d3c78b871b31d32ea94d0e3766be26f207")
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-            ),
-            ipp_proof: InnerProductProof {
-                L_vec: vec![
-                    "419a1d432b714a41beaff4e82b78b7a45f7e557970bdd2340f41c45abf9f09da",
-                    "a2b538ad57b72814bc665b496f7097f5918e0e5a6ac6765c04eeb30f0b821379",
-                    "dcc03edd8d92c940ce8e1a1f1efb210181bc5679d403f60e7115b1d253b042d0",
-                    "57b1af413d8223f36a86714c26670a0848ea441b983919b7f317c94f0b6c6e8f",
-                    "bc0e6d3a5dafb6da03925a4fb479986c7b6238031f06b21ed6dce94f02160e9e",
-                    "f16bf43722a7452dd94d0c83338855315b69b89ee86a762fc62dc7e792325b11",
-                    "1fb1224843b5821553516cf1e341e58d9a7217c5ba03854b7a7863317c6b40d9",
-                ]
+        let (proof, commitments) = RangeProof::prove_multiple(
+            &bp_gens,
+            &pc_gens,
+            &mut transcript,
+            &[100, 200],
+            &[v_blinding_0, v_blinding_1],
+            64,
+        )
+        .unwrap();
+
+        let commitments = hex::encode(monero::consensus::serialize(
+            &commitments
                 .iter()
-                .map(|k| CompressedEdwardsY::from_slice(&hex::decode(k).unwrap()))
-                .collect(),
-                R_vec: vec![
-                    "bde422559b62d8742bfbd827c1600f0be73585b483d87f38a5561db79f90eccc",
-                    "28af9197e7ae06e99d8a3f116c793aaa0a6dfcf50e4a96c2e18d7b247136cb58",
-                    "64e91f543a77037a1854d6ca6ca26b28c882eeeb4561b832bc614700741007ce",
-                    "741765b81ea3bb46c46c167c40b84a3c538422f84bcb772d468e730c6e23adf0",
-                    "871eebd34c465f5aa851c06a66f64d3f535eb39b185900f89e51d6bc1b276cf2",
-                    "cb99b11965b4ae4ca825a7ff44ba37c6ab8c0a3a0d9e3066d03c1f40267c3abe",
-                    "07ded027121f2c8284c3bc0955ae84994f826542670ccfea5f5103c763271532",
-                ]
-                .iter()
-                .map(|k| CompressedEdwardsY::from_slice(&hex::decode(k).unwrap()))
-                .collect(),
-                a: Scalar::from_bytes_mod_order(
-                    hex::decode("cbcc8efba5b952c099092cf96eabdbd5cc79b01a3b7af3142bedb5a41484a009")
-                        .unwrap()
-                        .try_into()
-                        .unwrap(),
-                ),
-                b: Scalar::from_bytes_mod_order(
-                    hex::decode("fca7ae4b38482032377eef47d16e4d31f81b1ff33b48aad05775614d00f2b502")
-                        .unwrap()
-                        .try_into()
-                        .unwrap(),
-                ),
-            },
-        };
+                .map(|x| monero::util::ringct::Key { key: x.to_bytes() })
+                .collect::<Vec<_>>(),
+        ));
+        dbg!(commitments);
 
-        let value_commitments = vec![
-            CompressedEdwardsY::from_slice(
-                hex::decode("72b66d33f53793b579a3226d6da55a0cbf22ee7a76ef3156ae86dcabb741a22a")
-                    .unwrap()
-                    .as_slice(),
-            ),
-            CompressedEdwardsY::from_slice(
-                hex::decode("1e70f838ef2c498181ee546f529c6f5ec68af53700ddf2ad33469af5b6875536")
-                    .unwrap()
-                    .as_slice(),
-            ),
-        ];
-
-        let n = 64;
-        // Verifier's scope
-        {
-            // 4. Verify with the same customization label as above
-            let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
-
-            let max_bitsize = 64;
-            let max_parties = 8;
-            let pc_gens = PedersenGens::default();
-            let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
-
-            assert!(dbg!(range_proof.verify_multiple(
-                &bp_gens,
-                &pc_gens,
-                &mut transcript,
-                &value_commitments,
-                n
-            ))
-            .is_ok());
-        }
+        let proof = hex::encode(monero::consensus::serialize(
+            &monero::util::ringct::Bulletproof::from(proof),
+        ));
+        dbg!(proof);
     }
 
     #[test]

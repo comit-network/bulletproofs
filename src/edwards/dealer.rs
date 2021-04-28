@@ -13,6 +13,7 @@ use alloc::vec::Vec;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
+use tiny_keccak::{Hasher, Keccak};
 
 use crate::edwards::generators::{BulletproofGens, PedersenGens};
 use crate::edwards::inner_product_proof;
@@ -103,20 +104,35 @@ impl<'a, 'b> DealerAwaitingBitCommitments<'a, 'b> {
             return Err(MPCError::WrongNumBitCommitments);
         }
 
-        // Commit each V_j individually
-        for vc in bit_commitments.iter() {
-            self.transcript.append_point(b"V", &vc.V_j);
-        }
-
         // Commit aggregated A_j, S_j
         let A: EdwardsPoint = bit_commitments.iter().map(|vc| vc.A_j).sum();
-        self.transcript.append_point(b"A", &A.compress());
-
         let S: EdwardsPoint = bit_commitments.iter().map(|vc| vc.S_j).sum();
-        self.transcript.append_point(b"S", &S.compress());
 
-        let y = self.transcript.challenge_scalar(b"y");
-        let z = self.transcript.challenge_scalar(b"z");
+        let mut keccak = Keccak::v256();
+        for bit_commitment in bit_commitments.iter() {
+            keccak.update(bit_commitment.V_j.as_bytes());
+        }
+        let mut hash_commitments = [0u8; 32];
+        keccak.finalize(&mut hash_commitments);
+
+        let mut keccak = Keccak::v256();
+        keccak.update(&hash_commitments);
+        keccak.update(A.compress().as_bytes());
+        keccak.update(S.compress().as_bytes());
+        let mut y = [0u8; 32];
+        keccak.finalize(&mut y);
+
+        // TODO: What happens if y has not been modularised yet?
+        let mut keccak = Keccak::v256();
+        keccak.update(&y);
+        let mut z = [0u8; 32];
+        keccak.finalize(&mut z);
+
+        // TODO: Must check if scalars are equal to zero and abort if so (or retry)
+
+        let y = Scalar::from_bytes_mod_order(y);
+        let z = Scalar::from_bytes_mod_order(z);
+
         let bit_challenge = BitChallenge { y, z };
 
         Ok((
@@ -171,6 +187,16 @@ impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
 
         self.transcript.append_point(b"T_1", &T_1.compress());
         self.transcript.append_point(b"T_2", &T_2.compress());
+
+        // TODO: Challenge scalar x comes from hash(hash(y), z, T_1,
+        // T_2). It's weird because hash(y) == z, so we should verify
+        // this. Currently the transcript indirectly holds y and z,
+        // but maybe we should pass them in instead.
+        //
+        // Actually, it looks like we could benefit from implementing
+        // the TranscriptProtocol trait ourselves, because this
+        // accumulation of different public data when producing
+        // different challenges also occurs in Monero
 
         let x = self.transcript.challenge_scalar(b"x");
         let poly_challenge = PolyChallenge { x };

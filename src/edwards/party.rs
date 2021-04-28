@@ -89,13 +89,17 @@ impl<'a> PartyAwaitingPosition<'a> {
         j: usize,
         rng: &mut T,
     ) -> Result<(PartyAwaitingBitChallenge<'a>, BitCommitment), MPCError> {
+        // TODO: Promote this to a constant
+        let inv_eight = Scalar::from(8u8).invert();
+
         if self.bp_gens.party_capacity <= j {
             return Err(MPCError::InvalidGeneratorsLength);
         }
 
         let bp_share = self.bp_gens.share(j);
 
-        let a_blinding = Scalar::random(rng);
+        let a_blinding = Scalar::random(rng) * inv_eight;
+
         // Compute A = <a_L, G> + <a_R, H> + a_blinding * B_blinding
         let mut A = self.pc_gens.B_blinding * a_blinding;
 
@@ -107,7 +111,7 @@ impl<'a> PartyAwaitingPosition<'a> {
             let v_i = Choice::from(((self.v >> i) & 1) as u8);
             let mut point = -H_i;
             point.conditional_assign(G_i, v_i);
-            A += point;
+            A += point * Scalar::from(8u8).invert();
             i += 1;
         }
 
@@ -115,6 +119,7 @@ impl<'a> PartyAwaitingPosition<'a> {
         let s_L: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
         let s_R: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
 
+        // NOTE: We did not verify this, but it looks exactly the same
         // Compute S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
         let S = EdwardsPoint::multiscalar_mul(
             iter::once(&s_blinding).chain(s_L.iter()).chain(s_R.iter()),
@@ -122,6 +127,7 @@ impl<'a> PartyAwaitingPosition<'a> {
                 .chain(bp_share.G(self.n))
                 .chain(bp_share.H(self.n)),
         );
+        let S = S * inv_eight;
 
         // Return next state and all commitments
         let bit_commitment = BitCommitment {
