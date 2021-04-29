@@ -892,14 +892,13 @@ mod tests {
         // let v_blinding_1 = Scalar::random(&mut thread_rng());
 
         let v_blinding_0 = *ALL_ONES;
-        let v_blinding_1 = *ALL_ONES;
 
         let (proof, commitments) = RangeProof::prove_multiple(
             &bp_gens,
             &pc_gens,
             &mut transcript,
-            &[100, 200],
-            &[v_blinding_0, v_blinding_1],
+            &[100],
+            &[v_blinding_0],
             64,
         )
         .unwrap();
