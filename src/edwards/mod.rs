@@ -39,15 +39,6 @@ lazy_static::lazy_static! {
     };
 }
 
-lazy_static::lazy_static! {
-    pub static ref ALL_ONES: Scalar = {
-        Scalar::from_bytes_mod_order([
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-            1, 1, 1,
-        ])
-    };
-}
-
 /// The `RangeProof` struct represents a proof that one or more values
 /// are in a range.
 ///
@@ -888,17 +879,15 @@ mod tests {
         //     .map(|x| x.compress())
         //     .collect::<Vec<_>>());
 
-        // let v_blinding_0 = Scalar::random(&mut thread_rng());
-        // let v_blinding_1 = Scalar::random(&mut thread_rng());
-
-        let v_blinding_0 = *ALL_ONES;
+        let v_blinding_0 = Scalar::random(&mut thread_rng());
+        let v_blinding_1 = Scalar::random(&mut thread_rng());
 
         let (proof, commitments) = RangeProof::prove_multiple(
             &bp_gens,
             &pc_gens,
             &mut transcript,
-            &[100],
-            &[v_blinding_0],
+            &[100, 200],
+            &[v_blinding_0, v_blinding_1],
             64,
         )
         .unwrap();
