@@ -101,12 +101,10 @@ impl<'a> PartyAwaitingPosition<'a> {
         let bp_share = self.bp_gens.share(j);
 
         // let a_blinding = Scalar::random(rng) * *INV_EIGHT;
-        let a_blinding = *ALL_ONES * *INV_EIGHT;
-
-        dbg!(a_blinding);
+        let a_blinding = *ALL_ONES;
 
         // Compute A = <a_L, G> + <a_R, H> + a_blinding * B_blinding
-        let mut A = self.pc_gens.B_blinding * a_blinding;
+        let mut A = self.pc_gens.B_blinding * a_blinding * *INV_EIGHT;
 
         use subtle::{Choice, ConditionallySelectable};
         let mut i = 0;

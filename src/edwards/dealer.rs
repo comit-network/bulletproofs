@@ -114,23 +114,23 @@ impl<'a, 'b> DealerAwaitingBitCommitments<'a, 'b> {
         }
         let mut hash_commitments = [0u8; 32];
         keccak.finalize(&mut hash_commitments);
+        let hash_commitments = Scalar::from_bytes_mod_order(hash_commitments);
 
         let mut keccak = Keccak::v256();
-        keccak.update(&hash_commitments);
+        keccak.update(hash_commitments.as_bytes());
         keccak.update(A.compress().as_bytes());
         keccak.update(S.compress().as_bytes());
         let mut y = [0u8; 32];
         keccak.finalize(&mut y);
+        let y = Scalar::from_bytes_mod_order(y);
 
-        // TODO: What happens if y has not been modularised yet?
         let mut keccak = Keccak::v256();
-        keccak.update(&y);
+        keccak.update(y.as_bytes());
         let mut z = [0u8; 32];
         keccak.finalize(&mut z);
 
         // TODO: Must check if scalars are equal to zero and abort if so (or retry)
 
-        let y = Scalar::from_bytes_mod_order(y);
         let z = Scalar::from_bytes_mod_order(z);
 
         let bit_challenge = BitChallenge { y, z };

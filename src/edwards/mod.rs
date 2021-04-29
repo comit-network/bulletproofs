@@ -130,7 +130,7 @@ impl From<RangeProof> for monero::util::ringct::Bulletproof {
                 key: from.ipp_proof.a.to_bytes(),
             },
             b: Key {
-                key: from.ipp_proof.a.to_bytes(),
+                key: from.ipp_proof.b.to_bytes(),
             },
             t: Key {
                 key: from.t_x.to_bytes(),

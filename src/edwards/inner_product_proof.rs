@@ -5,15 +5,16 @@ extern crate alloc;
 use alloc::borrow::Borrow;
 use alloc::vec::Vec;
 
+use crate::edwards::INV_EIGHT;
+use crate::errors::ProofError;
+use crate::transcript::TranscriptProtocol;
 use core::iter;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 use merlin::Transcript;
+use sha3::Keccak256;
 use tiny_keccak::{Hasher, Keccak};
-
-use crate::errors::ProofError;
-use crate::transcript::TranscriptProtocol;
 
 #[derive(Clone, Debug)]
 pub struct InnerProductProof {
@@ -37,6 +38,7 @@ impl InnerProductProof {
     /// either 0 or a power of 2.
     pub fn create(
         transcript: &mut Transcript,
+        // x_ip
         w: &Scalar,
         Q: &EdwardsPoint,
         G_factors: &[Scalar],
@@ -49,9 +51,13 @@ impl InnerProductProof {
         // Create slices G, H, a, b backed by their respective
         // vectors.  This lets us reslice as we compress the lengths
         // of the vectors in the main loop below.
+        // Gprime
         let mut G = &mut G_vec[..];
+        // Hprime
         let mut H = &mut H_vec[..];
+        // a_prime
         let mut a = &mut a_vec[..];
+        // b_prime
         let mut b = &mut b_vec[..];
 
         let mut n = G.len();
@@ -71,9 +77,11 @@ impl InnerProductProof {
         let mut L_vec = Vec::with_capacity(lg_n);
         let mut R_vec = Vec::with_capacity(lg_n);
 
-        let mut keccak = Keccak::v256();
+        let mut prev_u = Scalar::zero();
+
         // If it's the first iteration, unroll the Hprime = H*y_inv scalar mults
         // into multiscalar muls, for performance.
+        // line 727 in bulletproof.cc
         if n != 1 {
             n = n / 2;
             let (a_L, a_R) = a.split_at_mut(n);
@@ -81,6 +89,7 @@ impl InnerProductProof {
             let (G_L, G_R) = G.split_at_mut(n);
             let (H_L, H_R) = H.split_at_mut(n);
 
+            // line 734 bulletproof.cc
             let c_L = inner_product(&a_L, &b_R);
             let c_R = inner_product(&a_R, &b_L);
 
@@ -93,7 +102,8 @@ impl InnerProductProof {
                             .zip(H_factors[0..n].into_iter())
                             .map(|(b_R_i, h)| b_R_i * h),
                     )
-                    .chain(iter::once(c_L)),
+                    .chain(iter::once(c_L))
+                    .map(|s| s * *INV_EIGHT),
                 G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
             )
             .compress();
@@ -107,7 +117,8 @@ impl InnerProductProof {
                             .zip(H_factors[n..2 * n].into_iter())
                             .map(|(b_L_i, h)| b_L_i * h),
                     )
-                    .chain(iter::once(c_R)),
+                    .chain(iter::once(c_R))
+                    .map(|s| s * *INV_EIGHT),
                 G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
             )
             .compress();
@@ -115,14 +126,17 @@ impl InnerProductProof {
             L_vec.push(L);
             R_vec.push(R);
 
+            let mut keccak = Keccak::v256();
             keccak.update(w.as_bytes());
             keccak.update(L.as_bytes());
             keccak.update(R.as_bytes());
 
             let mut u = [0u8; 32];
-            keccak.clone().finalize(&mut u);
+            keccak.finalize(&mut u);
             let u = Scalar::from_bytes_mod_order(u);
             let u_inv = u.invert();
+
+            prev_u = u;
 
             for i in 0..n {
                 a_L[i] = a_L[i] * u + u_inv * a_R[i];
@@ -154,13 +168,19 @@ impl InnerProductProof {
             let c_R = inner_product(&a_R, &b_L);
 
             let L = EdwardsPoint::vartime_multiscalar_mul(
-                a_L.iter().chain(b_R.iter()).chain(iter::once(&c_L)),
+                a_L.iter()
+                    .chain(b_R.iter())
+                    .chain(iter::once(&c_L))
+                    .map(|s| s * *INV_EIGHT),
                 G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
             )
             .compress();
 
             let R = EdwardsPoint::vartime_multiscalar_mul(
-                a_R.iter().chain(b_L.iter()).chain(iter::once(&c_R)),
+                a_R.iter()
+                    .chain(b_L.iter())
+                    .chain(iter::once(&c_R))
+                    .map(|s| s * *INV_EIGHT),
                 G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
             )
             .compress();
@@ -171,14 +191,17 @@ impl InnerProductProof {
             transcript.append_point(b"L", &L);
             transcript.append_point(b"R", &R);
 
-            keccak.update(w.as_bytes());
+            let mut keccak = Keccak::v256();
+            keccak.update(prev_u.as_bytes());
             keccak.update(L.as_bytes());
             keccak.update(R.as_bytes());
 
             let mut u = [0u8; 32];
-            keccak.clone().finalize(&mut u);
+            keccak.finalize(&mut u);
             let u = Scalar::from_bytes_mod_order(u);
             let u_inv = u.invert();
+
+            prev_u = u;
 
             for i in 0..n {
                 a_L[i] = a_L[i] * u + u_inv * a_R[i];
