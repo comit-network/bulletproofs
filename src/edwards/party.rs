@@ -20,13 +20,10 @@ use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::edwards::INV_EIGHT;
+use crate::edwards::generators::{BulletproofGens, PedersenGens};
+use crate::edwards::{ALL_ONES, INV_EIGHT};
 use crate::errors::MPCError;
 use crate::util;
-use crate::{
-    edwards::generators::{BulletproofGens, PedersenGens},
-    util::Poly2,
-};
 
 #[cfg(feature = "std")]
 use rand::thread_rng;
@@ -54,7 +51,9 @@ impl Party {
 
         let v_8 = Scalar::from(v) * *INV_EIGHT;
         let v_blinding_8 = Scalar::from(v_blinding) * *INV_EIGHT;
-        let V = pc_gens.commit(v_8, v_blinding_8).compress();
+        let V = pc_gens.commit(dbg!(v_8), dbg!(v_blinding_8)).compress();
+
+        dbg!(hex::encode(V.as_bytes()));
 
         Ok(PartyAwaitingPosition {
             bp_gens,
@@ -101,7 +100,10 @@ impl<'a> PartyAwaitingPosition<'a> {
 
         let bp_share = self.bp_gens.share(j);
 
-        let a_blinding = Scalar::random(rng) * *INV_EIGHT;
+        // let a_blinding = Scalar::random(rng) * *INV_EIGHT;
+        let a_blinding = *ALL_ONES * *INV_EIGHT;
+
+        dbg!(a_blinding);
 
         // Compute A = <a_L, G> + <a_R, H> + a_blinding * B_blinding
         let mut A = self.pc_gens.B_blinding * a_blinding;
@@ -118,9 +120,12 @@ impl<'a> PartyAwaitingPosition<'a> {
             i += 1;
         }
 
-        let s_blinding = Scalar::random(rng);
-        let s_L: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
-        let s_R: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
+        // let s_blinding = Scalar::random(rng);
+        let s_blinding = *ALL_ONES;
+        // let s_L: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
+        // let s_R: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
+        let s_L: Vec<Scalar> = (0..self.n).map(|_| *ALL_ONES).collect();
+        let s_R: Vec<Scalar> = (0..self.n).map(|_| *ALL_ONES).collect();
 
         // NOTE: We did not verify this, but it looks exactly the same
         // Compute S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
@@ -220,8 +225,10 @@ impl<'a> PartyAwaitingBitChallenge<'a> {
         let t_poly = l_poly.inner_product(&r_poly);
 
         // Generate x by committing to T_1, T_2 (line 49-54)
-        let t_1_blinding = Scalar::random(rng);
-        let t_2_blinding = Scalar::random(rng);
+        // let t_1_blinding = Scalar::random(rng);
+        // let t_2_blinding = Scalar::random(rng);
+        let t_1_blinding = *ALL_ONES;
+        let t_2_blinding = *ALL_ONES;
         let T_1 = self
             .pc_gens
             .commit(t_poly.1 * *INV_EIGHT, t_1_blinding * *INV_EIGHT);

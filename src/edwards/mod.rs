@@ -39,6 +39,15 @@ lazy_static::lazy_static! {
     };
 }
 
+lazy_static::lazy_static! {
+    pub static ref ALL_ONES: Scalar = {
+        Scalar::from_bytes_mod_order([
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1,
+        ])
+    };
+}
+
 /// The `RangeProof` struct represents a proof that one or more values
 /// are in a range.
 ///
@@ -864,8 +873,26 @@ mod tests {
         let max_parties = 16;
         let pc_gens = PedersenGens::default();
         let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
-        let v_blinding_0 = Scalar::random(&mut thread_rng());
-        let v_blinding_1 = Scalar::random(&mut thread_rng());
+
+        // dbg!(bp_gens
+        //     .G_vec
+        //     .iter()
+        //     .flatten()
+        //     .map(|x| x.compress())
+        //     .collect::<Vec<_>>());
+
+        // dbg!(bp_gens
+        //     .H_vec
+        //     .iter()
+        //     .flatten()
+        //     .map(|x| x.compress())
+        //     .collect::<Vec<_>>());
+
+        // let v_blinding_0 = Scalar::random(&mut thread_rng());
+        // let v_blinding_1 = Scalar::random(&mut thread_rng());
+
+        let v_blinding_0 = *ALL_ONES;
+        let v_blinding_1 = *ALL_ONES;
 
         let (proof, commitments) = RangeProof::prove_multiple(
             &bp_gens,
@@ -885,9 +912,9 @@ mod tests {
         ));
         dbg!(commitments);
 
-        let proof = hex::encode(monero::consensus::serialize(
-            &monero::util::ringct::Bulletproof::from(proof),
-        ));
+        let proof = hex::encode(monero::consensus::serialize(dbg!(
+            &monero::util::ringct::Bulletproof::from(proof)
+        )));
         dbg!(proof);
     }
 
