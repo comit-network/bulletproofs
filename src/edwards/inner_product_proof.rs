@@ -7,13 +7,10 @@ use alloc::vec::Vec;
 
 use crate::edwards::INV_EIGHT;
 use crate::errors::ProofError;
-use crate::transcript::TranscriptProtocol;
 use core::iter;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
-use merlin::Transcript;
-use sha3::Keccak256;
 use tiny_keccak::{Hasher, Keccak};
 
 #[derive(Clone, Debug)]
@@ -37,8 +34,6 @@ impl InnerProductProof {
     /// The lengths of the vectors must all be the same, and must all be
     /// either 0 or a power of 2.
     pub fn create(
-        transcript: &mut Transcript,
-        // x_ip
         w: &Scalar,
         Q: &EdwardsPoint,
         G_factors: &[Scalar],
@@ -83,6 +78,7 @@ impl InnerProductProof {
         // into multiscalar muls, for performance.
         // line 727 in bulletproof.cc
         if n != 1 {
+            dbg!(n);
             n = n / 2;
             let (a_L, a_R) = a.split_at_mut(n);
             let (b_L, b_R) = b.split_at_mut(n);
@@ -158,6 +154,7 @@ impl InnerProductProof {
         }
 
         while n != 1 {
+            dbg!(n);
             n = n / 2;
             let (a_L, a_R) = a.split_at_mut(n);
             let (b_L, b_R) = b.split_at_mut(n);
@@ -187,9 +184,6 @@ impl InnerProductProof {
 
             L_vec.push(L);
             R_vec.push(R);
-
-            transcript.append_point(b"L", &L);
-            transcript.append_point(b"R", &R);
 
             let mut keccak = Keccak::v256();
             keccak.update(prev_u.as_bytes());
@@ -230,7 +224,7 @@ impl InnerProductProof {
     pub(crate) fn verification_scalars(
         &self,
         n: usize,
-        transcript: &mut Transcript,
+        w: Scalar,
     ) -> Result<(Vec<Scalar>, Vec<Scalar>, Vec<Scalar>), ProofError> {
         let lg_n = self.L_vec.len();
         if lg_n >= 32 {
@@ -242,15 +236,22 @@ impl InnerProductProof {
             return Err(ProofError::VerificationError);
         }
 
-        transcript.innerproduct_domain_sep(n as u64);
-
         // 1. Recompute x_k,...,x_1 based on the proof transcript
 
+        let mut prev_u = w;
         let mut challenges = Vec::with_capacity(lg_n);
         for (L, R) in self.L_vec.iter().zip(self.R_vec.iter()) {
-            transcript.validate_and_append_point(b"L", L)?;
-            transcript.validate_and_append_point(b"R", R)?;
-            challenges.push(transcript.challenge_scalar(b"u"));
+            let mut keccak = Keccak::v256();
+            keccak.update(prev_u.as_bytes());
+            keccak.update(L.as_bytes());
+            keccak.update(R.as_bytes());
+
+            let mut u = [0u8; 32];
+            keccak.finalize(&mut u);
+            let u = Scalar::from_bytes_mod_order(u);
+
+            challenges.push(u);
+            prev_u = u;
         }
 
         // 2. Compute 1/(u_k...u_1) and 1/u_k, ..., 1/u_1
@@ -292,13 +293,13 @@ impl InnerProductProof {
     pub fn verify<IG, IH>(
         &self,
         n: usize,
-        transcript: &mut Transcript,
         G_factors: IG,
         H_factors: IH,
         P: &EdwardsPoint,
         Q: &EdwardsPoint,
         G: &[EdwardsPoint],
         H: &[EdwardsPoint],
+        w: Scalar,
     ) -> Result<(), ProofError>
     where
         IG: IntoIterator,
@@ -306,7 +307,7 @@ impl InnerProductProof {
         IH: IntoIterator,
         IH::Item: Borrow<Scalar>,
     {
-        let (u_sq, u_inv_sq, s) = self.verification_scalars(n, transcript)?;
+        let (u_sq, u_inv_sq, s) = self.verification_scalars(n, w)?;
 
         let g_times_a_times_s = G_factors
             .into_iter()
@@ -325,16 +326,25 @@ impl InnerProductProof {
         let neg_u_sq = u_sq.iter().map(|ui| -ui);
         let neg_u_inv_sq = u_inv_sq.iter().map(|ui| -ui);
 
+        let eight = Scalar::from(8u8);
         let Ls = self
             .L_vec
             .iter()
-            .map(|p| p.decompress().ok_or(ProofError::VerificationError))
+            .map(|p| {
+                p.decompress()
+                    .map(|p| eight * p)
+                    .ok_or(ProofError::VerificationError)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         let Rs = self
             .R_vec
             .iter()
-            .map(|p| p.decompress().ok_or(ProofError::VerificationError))
+            .map(|p| {
+                p.decompress()
+                    .map(|p| eight * p)
+                    .ok_or(ProofError::VerificationError)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         let expect_P = EdwardsPoint::vartime_multiscalar_mul(
@@ -499,9 +509,7 @@ mod tests {
             G.iter().chain(H.iter()).chain(iter::once(&Q)),
         );
 
-        let mut verifier = Transcript::new(b"innerproducttest");
         let proof = InnerProductProof::create(
-            &mut verifier,
             &w,
             &Q,
             &G_factors,
@@ -512,32 +520,30 @@ mod tests {
             b.clone(),
         );
 
-        let mut verifier = Transcript::new(b"innerproducttest");
         assert!(proof
             .verify(
                 n,
-                &mut verifier,
                 iter::repeat(Scalar::one()).take(n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,
                 &G,
-                &H
+                &H,
+                w
             )
             .is_ok());
 
         let proof = InnerProductProof::from_bytes(proof.to_bytes().as_slice()).unwrap();
-        let mut verifier = Transcript::new(b"innerproducttest");
         assert!(proof
             .verify(
                 n,
-                &mut verifier,
                 iter::repeat(Scalar::one()).take(n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,
                 &G,
-                &H
+                &H,
+                w
             )
             .is_ok());
     }

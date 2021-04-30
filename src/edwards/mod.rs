@@ -7,16 +7,15 @@ extern crate rand;
 #[cfg(feature = "std")]
 use self::rand::thread_rng;
 use alloc::vec::Vec;
+use tiny_keccak::{Hasher, Keccak};
 
 use core::iter;
 
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::{IsIdentity, VartimeMultiscalarMul};
-use merlin::Transcript;
 
 use crate::errors::ProofError;
-use crate::transcript::TranscriptProtocol;
 use crate::util;
 use generators::{BulletproofGens, PedersenGens};
 use inner_product_proof::InnerProductProof;
@@ -190,21 +189,13 @@ impl RangeProof {
     pub fn prove_single_with_rng<T: RngCore + CryptoRng>(
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         v: u64,
         v_blinding: &Scalar,
         n: usize,
         rng: &mut T,
     ) -> Result<(RangeProof, CompressedEdwardsY), ProofError> {
-        let (p, Vs) = RangeProof::prove_multiple_with_rng(
-            bp_gens,
-            pc_gens,
-            transcript,
-            &[v],
-            &[*v_blinding],
-            n,
-            rng,
-        )?;
+        let (p, Vs) =
+            RangeProof::prove_multiple_with_rng(bp_gens, pc_gens, &[v], &[*v_blinding], n, rng)?;
         Ok((p, Vs[0]))
     }
 
@@ -216,20 +207,11 @@ impl RangeProof {
     pub fn prove_single(
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         v: u64,
         v_blinding: &Scalar,
         n: usize,
     ) -> Result<(RangeProof, CompressedEdwardsY), ProofError> {
-        RangeProof::prove_single_with_rng(
-            bp_gens,
-            pc_gens,
-            transcript,
-            v,
-            v_blinding,
-            n,
-            &mut thread_rng(),
-        )
+        RangeProof::prove_single_with_rng(bp_gens, pc_gens, v, v_blinding, n, &mut thread_rng())
     }
 
     /// Create a rangeproof for a set of values.
@@ -289,7 +271,6 @@ impl RangeProof {
     pub fn prove_multiple_with_rng<T: RngCore + CryptoRng>(
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         values: &[u64],
         blindings: &[Scalar],
         n: usize,
@@ -302,7 +283,7 @@ impl RangeProof {
             return Err(ProofError::WrongNumBlindingFactors);
         }
 
-        let dealer = Dealer::new(bp_gens, pc_gens, transcript, n, values.len())?;
+        let dealer = Dealer::new(bp_gens, pc_gens, n, values.len())?;
 
         let parties: Vec<_> = values
             .iter()
@@ -349,7 +330,6 @@ impl RangeProof {
     pub fn prove_multiple(
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         values: &[u64],
         blindings: &[Scalar],
         n: usize,
@@ -357,7 +337,6 @@ impl RangeProof {
         RangeProof::prove_multiple_with_rng(
             bp_gens,
             pc_gens,
-            transcript,
             values,
             blindings,
             n,
@@ -372,12 +351,11 @@ impl RangeProof {
         &self,
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         V: &CompressedEdwardsY,
         n: usize,
         rng: &mut T,
     ) -> Result<(), ProofError> {
-        self.verify_multiple_with_rng(bp_gens, pc_gens, transcript, &[*V], n, rng)
+        self.verify_multiple_with_rng(bp_gens, pc_gens, &[*V], n, rng)
     }
 
     /// Verifies a rangeproof for a given value commitment \\(V\\).
@@ -389,11 +367,10 @@ impl RangeProof {
         &self,
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         V: &CompressedEdwardsY,
         n: usize,
     ) -> Result<(), ProofError> {
-        self.verify_single_with_rng(bp_gens, pc_gens, transcript, V, n, &mut thread_rng())
+        self.verify_single_with_rng(bp_gens, pc_gens, V, n, &mut thread_rng())
     }
 
     /// Verifies an aggregated rangeproof for the given value commitments.
@@ -401,7 +378,6 @@ impl RangeProof {
         &self,
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         value_commitments: &[CompressedEdwardsY],
         n: usize,
         rng: &mut T,
@@ -420,37 +396,71 @@ impl RangeProof {
             return Err(ProofError::InvalidGeneratorsLength);
         }
 
-        transcript.rangeproof_domain_sep(n as u64, m as u64);
+        let mut keccak = Keccak::v256();
+        for commitment in value_commitments.iter() {
+            keccak.update(commitment.as_bytes());
+        }
+        let mut hash_commitments = [0u8; 32];
+        keccak.finalize(&mut hash_commitments);
+        let hash_commitments = Scalar::from_bytes_mod_order(hash_commitments);
 
-        for V in value_commitments.iter() {
-            // Allow the commitments to be zero (0 value, 0 blinding)
-            // See https://github.com/dalek-cryptography/bulletproofs/pull/248#discussion_r255167177
-            transcript.append_point(b"V", V);
+        let mut keccak = Keccak::v256();
+        keccak.update(hash_commitments.as_bytes());
+        keccak.update(self.A.as_bytes());
+        keccak.update(self.S.as_bytes());
+        let mut y = [0u8; 32];
+        keccak.finalize(&mut y);
+        let y = Scalar::from_bytes_mod_order(y);
+
+        if y == Scalar::zero() {
+            return Err(ProofError::VerificationError);
         }
 
-        transcript.validate_and_append_point(b"A", &self.A)?;
-        transcript.validate_and_append_point(b"S", &self.S)?;
+        let mut keccak = Keccak::v256();
+        keccak.update(y.as_bytes());
+        let mut z = [0u8; 32];
+        keccak.finalize(&mut z);
 
-        let y = transcript.challenge_scalar(b"y");
-        let z = transcript.challenge_scalar(b"z");
+        let z = Scalar::from_bytes_mod_order(z);
+
+        if z == Scalar::zero() {
+            return Err(ProofError::VerificationError);
+        }
+
         let zz = z * z;
         let minus_z = -z;
 
-        transcript.validate_and_append_point(b"T_1", &self.T_1)?;
-        transcript.validate_and_append_point(b"T_2", &self.T_2)?;
+        let mut keccak = Keccak::v256();
+        keccak.update(z.as_bytes());
+        keccak.update(z.as_bytes());
+        keccak.update(self.T_1.as_bytes());
+        keccak.update(self.T_2.as_bytes());
+        let mut x = [0u8; 32];
+        keccak.finalize(&mut x);
+        let x = Scalar::from_bytes_mod_order(x);
 
-        let x = transcript.challenge_scalar(b"x");
+        if x == Scalar::zero() {
+            return Err(ProofError::VerificationError);
+        }
 
-        transcript.append_scalar(b"t_x", &self.t_x);
-        transcript.append_scalar(b"t_x_blinding", &self.t_x_blinding);
-        transcript.append_scalar(b"e_blinding", &self.e_blinding);
+        let mut keccak = Keccak::v256();
+        keccak.update(x.as_bytes());
+        keccak.update(x.as_bytes());
+        keccak.update(self.t_x_blinding.as_bytes());
+        keccak.update(self.e_blinding.as_bytes());
+        keccak.update(self.t_x.as_bytes());
+        let mut w = [0u8; 32];
+        keccak.finalize(&mut w);
+        let w = Scalar::from_bytes_mod_order(w);
 
-        let w = transcript.challenge_scalar(b"w");
+        if w == Scalar::zero() {
+            return Err(ProofError::VerificationError);
+        }
 
         // Challenge value for batching statements to be verified
         let c = Scalar::random(rng);
 
-        let (x_sq, x_inv_sq, s) = self.ipp_proof.verification_scalars(n * m, transcript)?;
+        let (x_sq, x_inv_sq, s) = self.ipp_proof.verification_scalars(n * m, w)?;
         let s_inv = s.iter().rev();
 
         let a = self.ipp_proof.a;
@@ -473,6 +483,7 @@ impl RangeProof {
         let value_commitment_scalars = util::exp_iter(z).take(m).map(|z_exp| c * zz * z_exp);
         let basepoint_scalar = w * (self.t_x - a * b) + c * (delta(n, m, &y, &z) - self.t_x);
 
+        let eight = Scalar::from(8u8);
         let mega_check = EdwardsPoint::optional_multiscalar_mul(
             iter::once(Scalar::one())
                 .chain(iter::once(x))
@@ -485,17 +496,31 @@ impl RangeProof {
                 .chain(g)
                 .chain(h)
                 .chain(value_commitment_scalars),
-            iter::once(self.A.decompress())
-                .chain(iter::once(self.S.decompress()))
-                .chain(iter::once(self.T_1.decompress()))
-                .chain(iter::once(self.T_2.decompress()))
-                .chain(self.ipp_proof.L_vec.iter().map(|L| L.decompress()))
-                .chain(self.ipp_proof.R_vec.iter().map(|R| R.decompress()))
+            iter::once(self.A.decompress().map(|A| eight * A))
+                .chain(iter::once(self.S.decompress().map(|S| eight * S)))
+                .chain(iter::once(self.T_1.decompress().map(|T_1| eight * T_1)))
+                .chain(iter::once(self.T_2.decompress().map(|T_2| eight * T_2)))
+                .chain(
+                    self.ipp_proof
+                        .L_vec
+                        .iter()
+                        .map(|L| L.decompress().map(|L| eight * L)),
+                )
+                .chain(
+                    self.ipp_proof
+                        .R_vec
+                        .iter()
+                        .map(|R| R.decompress().map(|R| eight * R)),
+                )
                 .chain(iter::once(Some(pc_gens.B_blinding)))
                 .chain(iter::once(Some(pc_gens.B)))
                 .chain(bp_gens.G(n, m).map(|&x| Some(x)))
                 .chain(bp_gens.H(n, m).map(|&x| Some(x)))
-                .chain(value_commitments.iter().map(|V| V.decompress())),
+                .chain(
+                    value_commitments
+                        .iter()
+                        .map(|V| V.decompress().map(|V| eight * V)),
+                ),
         )
         .ok_or_else(|| ProofError::VerificationError)?;
 
@@ -514,18 +539,10 @@ impl RangeProof {
         &self,
         bp_gens: &BulletproofGens,
         pc_gens: &PedersenGens,
-        transcript: &mut Transcript,
         value_commitments: &[CompressedEdwardsY],
         n: usize,
     ) -> Result<(), ProofError> {
-        self.verify_multiple_with_rng(
-            bp_gens,
-            pc_gens,
-            transcript,
-            value_commitments,
-            n,
-            &mut thread_rng(),
-        )
+        self.verify_multiple_with_rng(bp_gens, pc_gens, value_commitments, n, &mut thread_rng())
     }
 
     /// Serializes the proof into a byte array of \\(2 \lg n + 9\\)
@@ -692,7 +709,7 @@ mod tests {
 
         // Both prover and verifier have access to the generators and the proof
         let max_bitsize = 64;
-        let max_parties = 8;
+        let max_parties = 16;
         let pc_gens = PedersenGens::default();
         let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
 
@@ -707,16 +724,8 @@ mod tests {
             let blindings: Vec<Scalar> = (0..m).map(|_| Scalar::random(&mut rng)).collect();
 
             // 1. Create the proof
-            let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
-            let (proof, value_commitments) = RangeProof::prove_multiple(
-                &bp_gens,
-                &pc_gens,
-                &mut transcript,
-                &values,
-                &blindings,
-                n,
-            )
-            .unwrap();
+            let (proof, value_commitments) =
+                RangeProof::prove_multiple(&bp_gens, &pc_gens, &values, &blindings, n).unwrap();
 
             // 2. Return serialized proof and value commitments
             (bincode::serialize(&proof).unwrap(), value_commitments)
@@ -727,183 +736,10 @@ mod tests {
             // 3. Deserialize
             let proof: RangeProof = bincode::deserialize(&proof_bytes).unwrap();
 
-            // 4. Verify with the same customization label as above
-            let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
-
             assert!(proof
-                .verify_multiple(&bp_gens, &pc_gens, &mut transcript, &value_commitments, n)
+                .verify_multiple(&bp_gens, &pc_gens, &value_commitments, n)
                 .is_ok());
         }
-    }
-
-    // #[test]
-    // fn verify_monero() {
-    //     use std::convert::TryInto;
-
-    //     // data from:
-    //     // https://xmrchain.net/tx/591f793429ad098cfed4ef7f7013bc01e3163f2a6b188e56635c3d5fa5c46704/1
-
-    //     let range_proof = RangeProof {
-    //         A: CompressedEdwardsY::from_slice(
-    //             &hex::decode("55fbdad6934e3b71818ad838cc8ca662472d892cc24ebd294677912b12b99b44")
-    //                 .unwrap(),
-    //         ),
-    //         S: CompressedEdwardsY::from_slice(
-    //             &hex::decode("d260f3d26408851379d5a6cc1aefff006f1368d2aa81a63900e6bde723be81cb")
-    //                 .unwrap(),
-    //         ),
-    //         T_1: CompressedEdwardsY::from_slice(
-    //             &hex::decode("d379b7931c267b1502a3a7a25cd0484af920c2834fa31b25652149e9a1387d25")
-    //                 .unwrap(),
-    //         ),
-    //         T_2: CompressedEdwardsY::from_slice(
-    //             &hex::decode("4dc254cce51b8aee743edd446f2ff6abf9099d3c76e1f2853cc902724cac07e9")
-    //                 .unwrap(),
-    //         ),
-    //         t_x: Scalar::from_bytes_mod_order(
-    //             hex::decode("d13537d958637c750fcc2f4b92884fb1c9712513ac5a9e1faebf96939fdae70f")
-    //                 .unwrap()
-    //                 .try_into()
-    //                 .unwrap(),
-    //         ),
-    //         t_x_blinding: Scalar::from_bytes_mod_order(
-    //             hex::decode("8635c6a66573e27192afa95969cb6c646d55d0e33aa5677e4eb32aae0555700f")
-    //                 .unwrap()
-    //                 .try_into()
-    //                 .unwrap(),
-    //         ),
-    //         e_blinding: Scalar::from_bytes_mod_order(
-    //             hex::decode("640dc51e9b284a990c96b62d22e817d3c78b871b31d32ea94d0e3766be26f207")
-    //                 .unwrap()
-    //                 .try_into()
-    //                 .unwrap(),
-    //         ),
-    //         ipp_proof: InnerProductProof {
-    //             L_vec: vec![
-    //                 "419a1d432b714a41beaff4e82b78b7a45f7e557970bdd2340f41c45abf9f09da",
-    //                 "a2b538ad57b72814bc665b496f7097f5918e0e5a6ac6765c04eeb30f0b821379",
-    //                 "dcc03edd8d92c940ce8e1a1f1efb210181bc5679d403f60e7115b1d253b042d0",
-    //                 "57b1af413d8223f36a86714c26670a0848ea441b983919b7f317c94f0b6c6e8f",
-    //                 "bc0e6d3a5dafb6da03925a4fb479986c7b6238031f06b21ed6dce94f02160e9e",
-    //                 "f16bf43722a7452dd94d0c83338855315b69b89ee86a762fc62dc7e792325b11",
-    //                 "1fb1224843b5821553516cf1e341e58d9a7217c5ba03854b7a7863317c6b40d9",
-    //             ]
-    //             .iter()
-    //             .map(|k| CompressedEdwardsY::from_slice(&hex::decode(k).unwrap()))
-    //             .collect(),
-    //             R_vec: vec![
-    //                 "bde422559b62d8742bfbd827c1600f0be73585b483d87f38a5561db79f90eccc",
-    //                 "28af9197e7ae06e99d8a3f116c793aaa0a6dfcf50e4a96c2e18d7b247136cb58",
-    //                 "64e91f543a77037a1854d6ca6ca26b28c882eeeb4561b832bc614700741007ce",
-    //                 "741765b81ea3bb46c46c167c40b84a3c538422f84bcb772d468e730c6e23adf0",
-    //                 "871eebd34c465f5aa851c06a66f64d3f535eb39b185900f89e51d6bc1b276cf2",
-    //                 "cb99b11965b4ae4ca825a7ff44ba37c6ab8c0a3a0d9e3066d03c1f40267c3abe",
-    //                 "07ded027121f2c8284c3bc0955ae84994f826542670ccfea5f5103c763271532",
-    //             ]
-    //             .iter()
-    //             .map(|k| CompressedEdwardsY::from_slice(&hex::decode(k).unwrap()))
-    //             .collect(),
-    //             a: Scalar::from_bytes_mod_order(
-    //                 hex::decode("cbcc8efba5b952c099092cf96eabdbd5cc79b01a3b7af3142bedb5a41484a009")
-    //                     .unwrap()
-    //                     .try_into()
-    //                     .unwrap(),
-    //             ),
-    //             b: Scalar::from_bytes_mod_order(
-    //                 hex::decode("fca7ae4b38482032377eef47d16e4d31f81b1ff33b48aad05775614d00f2b502")
-    //                     .unwrap()
-    //                     .try_into()
-    //                     .unwrap(),
-    //             ),
-    //         },
-    //     };
-
-    //     let value_commitments = vec![
-    //         CompressedEdwardsY::from_slice(
-    //             hex::decode("72b66d33f53793b579a3226d6da55a0cbf22ee7a76ef3156ae86dcabb741a22a")
-    //                 .unwrap()
-    //                 .as_slice(),
-    //         ),
-    //         CompressedEdwardsY::from_slice(
-    //             hex::decode("1e70f838ef2c498181ee546f529c6f5ec68af53700ddf2ad33469af5b6875536")
-    //                 .unwrap()
-    //                 .as_slice(),
-    //         ),
-    //     ];
-
-    //     let n = 64;
-    //     // Verifier's scope
-    //     {
-    //         // 4. Verify with the same customization label as above
-    //         let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
-
-    //         let max_bitsize = 64;
-    //         let max_parties = 16;
-    //         let pc_gens = PedersenGens::default();
-    //         let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
-
-    //         let res = range_proof.verify_multiple(
-    //             &bp_gens,
-    //             &pc_gens,
-    //             &mut transcript,
-    //             &value_commitments,
-    //             n,
-    //         );
-
-    //         dbg!(&res);
-
-    //         assert!(res.is_ok());
-    //     }
-    // }
-
-    #[test]
-    fn prove_monero() {
-        let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
-
-        let max_bitsize = 64;
-        let max_parties = 16;
-        let pc_gens = PedersenGens::default();
-        let bp_gens = BulletproofGens::new(max_bitsize, max_parties);
-
-        // dbg!(bp_gens
-        //     .G_vec
-        //     .iter()
-        //     .flatten()
-        //     .map(|x| x.compress())
-        //     .collect::<Vec<_>>());
-
-        // dbg!(bp_gens
-        //     .H_vec
-        //     .iter()
-        //     .flatten()
-        //     .map(|x| x.compress())
-        //     .collect::<Vec<_>>());
-
-        let v_blinding_0 = Scalar::random(&mut thread_rng());
-        let v_blinding_1 = Scalar::random(&mut thread_rng());
-
-        let (proof, commitments) = RangeProof::prove_multiple(
-            &bp_gens,
-            &pc_gens,
-            &mut transcript,
-            &[100, 200],
-            &[v_blinding_0, v_blinding_1],
-            64,
-        )
-        .unwrap();
-
-        let commitments = hex::encode(monero::consensus::serialize(
-            &commitments
-                .iter()
-                .map(|x| monero::util::ringct::Key { key: x.to_bytes() })
-                .collect::<Vec<_>>(),
-        ));
-        dbg!(commitments);
-
-        let proof = hex::encode(monero::consensus::serialize(dbg!(
-            &monero::util::ringct::Bulletproof::from(proof)
-        )));
-        dbg!(proof);
     }
 
     #[test]
@@ -947,77 +783,8 @@ mod tests {
     }
 
     #[test]
-    fn detect_dishonest_party_during_aggregation() {
-        use self::dealer::*;
-        use self::party::*;
-
-        use crate::errors::MPCError;
-
-        // Simulate four parties, two of which will be dishonest and use a 64-bit value.
-        let m = 4;
-        let n = 32;
-
-        let pc_gens = PedersenGens::default();
-        let bp_gens = BulletproofGens::new(n, m);
-
-        use self::rand::Rng;
-        let mut rng = rand::thread_rng();
-        let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
-
-        // Parties 0, 2 are honest and use a 32-bit value
-        let v0 = rng.gen::<u32>() as u64;
-        let v0_blinding = Scalar::random(&mut rng);
-        let party0 = Party::new(&bp_gens, &pc_gens, v0, v0_blinding, n).unwrap();
-
-        let v2 = rng.gen::<u32>() as u64;
-        let v2_blinding = Scalar::random(&mut rng);
-        let party2 = Party::new(&bp_gens, &pc_gens, v2, v2_blinding, n).unwrap();
-
-        // Parties 1, 3 are dishonest and use a 64-bit value
-        let v1 = rng.gen::<u64>();
-        let v1_blinding = Scalar::random(&mut rng);
-        let party1 = Party::new(&bp_gens, &pc_gens, v1, v1_blinding, n).unwrap();
-
-        let v3 = rng.gen::<u64>();
-        let v3_blinding = Scalar::random(&mut rng);
-        let party3 = Party::new(&bp_gens, &pc_gens, v3, v3_blinding, n).unwrap();
-
-        let dealer = Dealer::new(&bp_gens, &pc_gens, &mut transcript, n, m).unwrap();
-
-        let (party0, bit_com0) = party0.assign_position(0).unwrap();
-        let (party1, bit_com1) = party1.assign_position(1).unwrap();
-        let (party2, bit_com2) = party2.assign_position(2).unwrap();
-        let (party3, bit_com3) = party3.assign_position(3).unwrap();
-
-        let (dealer, bit_challenge) = dealer
-            .receive_bit_commitments(vec![bit_com0, bit_com1, bit_com2, bit_com3])
-            .unwrap();
-
-        let (party0, poly_com0) = party0.apply_challenge(&bit_challenge);
-        let (party1, poly_com1) = party1.apply_challenge(&bit_challenge);
-        let (party2, poly_com2) = party2.apply_challenge(&bit_challenge);
-        let (party3, poly_com3) = party3.apply_challenge(&bit_challenge);
-
-        let (dealer, poly_challenge) = dealer
-            .receive_poly_commitments(vec![poly_com0, poly_com1, poly_com2, poly_com3])
-            .unwrap();
-
-        let share0 = party0.apply_challenge(&poly_challenge).unwrap();
-        let share1 = party1.apply_challenge(&poly_challenge).unwrap();
-        let share2 = party2.apply_challenge(&poly_challenge).unwrap();
-        let share3 = party3.apply_challenge(&poly_challenge).unwrap();
-
-        match dealer.receive_shares(&[share0, share1, share2, share3]) {
-            Err(MPCError::MalformedProofShares { bad_shares }) => {
-                assert_eq!(bad_shares, vec![1, 3]);
-            }
-            Err(_) => {
-                panic!("Got wrong error type from malformed shares");
-            }
-            Ok(_) => {
-                panic!("The proof was malformed, but it was not detected");
-            }
-        }
+    fn create_and_verify_n_64_m_16() {
+        singleparty_create_and_verify_helper(64, 16);
     }
 
     #[test]
@@ -1035,13 +802,12 @@ mod tests {
 
         use self::rand::Rng;
         let mut rng = rand::thread_rng();
-        let mut transcript = Transcript::new(b"AggregatedRangeProofTest");
 
         let v0 = rng.gen::<u32>() as u64;
         let v0_blinding = Scalar::random(&mut rng);
         let party0 = Party::new(&bp_gens, &pc_gens, v0, v0_blinding, n).unwrap();
 
-        let dealer = Dealer::new(&bp_gens, &pc_gens, &mut transcript, n, m).unwrap();
+        let dealer = Dealer::new(&bp_gens, &pc_gens, n, m).unwrap();
 
         // Now do the protocol flow as normal....
 

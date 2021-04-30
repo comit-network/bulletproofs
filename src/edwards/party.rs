@@ -51,9 +51,7 @@ impl Party {
 
         let v_8 = Scalar::from(v) * *INV_EIGHT;
         let v_blinding_8 = Scalar::from(v_blinding) * *INV_EIGHT;
-        let V = pc_gens.commit(dbg!(v_8), dbg!(v_blinding_8)).compress();
-
-        dbg!(hex::encode(V.as_bytes()));
+        let V = pc_gens.commit(v_8, v_blinding_8).compress();
 
         Ok(PartyAwaitingPosition {
             bp_gens,

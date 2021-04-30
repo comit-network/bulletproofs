@@ -12,21 +12,14 @@ use alloc::vec::Vec;
 
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
-use merlin::Transcript;
 use tiny_keccak::{Hasher, Keccak};
 
 use crate::edwards::generators::{BulletproofGens, PedersenGens};
 use crate::edwards::inner_product_proof;
 use crate::edwards::RangeProof;
 use crate::errors::MPCError;
-use crate::transcript::TranscriptProtocol;
-
-use rand_core::{CryptoRng, RngCore};
 
 use crate::util;
-
-#[cfg(feature = "std")]
-use rand::thread_rng;
 
 use super::messages::*;
 
@@ -35,13 +28,12 @@ pub struct Dealer {}
 
 impl Dealer {
     /// Creates a new dealer coordinating `m` parties proving `n`-bit ranges.
-    pub fn new<'a, 'b>(
-        bp_gens: &'b BulletproofGens,
-        pc_gens: &'b PedersenGens,
-        transcript: &'a mut Transcript,
+    pub fn new<'a>(
+        bp_gens: &'a BulletproofGens,
+        pc_gens: &'a PedersenGens,
         n: usize,
         m: usize,
-    ) -> Result<DealerAwaitingBitCommitments<'a, 'b>, MPCError> {
+    ) -> Result<DealerAwaitingBitCommitments<'a>, MPCError> {
         if !(n == 8 || n == 16 || n == 32 || n == 64) {
             return Err(MPCError::InvalidBitsize);
         }
@@ -55,27 +47,9 @@ impl Dealer {
             return Err(MPCError::InvalidGeneratorsLength);
         }
 
-        // At the end of the protocol, the dealer will attempt to
-        // verify the proof, and if it fails, determine which party's
-        // shares were invalid.
-        //
-        // However, verifying the proof requires either knowledge of
-        // all of the challenges, or a copy of the initial transcript
-        // state.
-        //
-        // The dealer has all of the challenges, but using them for
-        // verification would require duplicating the verification
-        // logic.  Instead, we keep a copy of the initial transcript
-        // state.
-        let initial_transcript = transcript.clone();
-
-        transcript.rangeproof_domain_sep(n as u64, m as u64);
-
         Ok(DealerAwaitingBitCommitments {
             bp_gens,
             pc_gens,
-            transcript,
-            initial_transcript,
             n,
             m,
         })
@@ -83,23 +57,19 @@ impl Dealer {
 }
 
 /// A dealer waiting for the parties to send their [`BitCommitment`]s.
-pub struct DealerAwaitingBitCommitments<'a, 'b> {
-    bp_gens: &'b BulletproofGens,
-    pc_gens: &'b PedersenGens,
-    transcript: &'a mut Transcript,
-    /// The dealer keeps a copy of the initial transcript state, so
-    /// that it can attempt to verify the aggregated proof at the end.
-    initial_transcript: Transcript,
+pub struct DealerAwaitingBitCommitments<'a> {
+    bp_gens: &'a BulletproofGens,
+    pc_gens: &'a PedersenGens,
     n: usize,
     m: usize,
 }
 
-impl<'a, 'b> DealerAwaitingBitCommitments<'a, 'b> {
+impl<'a> DealerAwaitingBitCommitments<'a> {
     /// Receive each party's [`BitCommitment`]s and compute the [`BitChallenge`].
     pub fn receive_bit_commitments(
         self,
         bit_commitments: Vec<BitCommitment>,
-    ) -> Result<(DealerAwaitingPolyCommitments<'a, 'b>, BitChallenge), MPCError> {
+    ) -> Result<(DealerAwaitingPolyCommitments<'a>, BitChallenge), MPCError> {
         if self.m != bit_commitments.len() {
             return Err(MPCError::WrongNumBitCommitments);
         }
@@ -139,12 +109,9 @@ impl<'a, 'b> DealerAwaitingBitCommitments<'a, 'b> {
             DealerAwaitingPolyCommitments {
                 n: self.n,
                 m: self.m,
-                transcript: self.transcript,
-                initial_transcript: self.initial_transcript,
                 bp_gens: self.bp_gens,
                 pc_gens: self.pc_gens,
                 bit_challenge,
-                bit_commitments,
                 A,
                 S,
             },
@@ -155,28 +122,25 @@ impl<'a, 'b> DealerAwaitingBitCommitments<'a, 'b> {
 
 /// A dealer which has sent the [`BitChallenge`] to the parties and
 /// is waiting for their [`PolyCommitment`]s.
-pub struct DealerAwaitingPolyCommitments<'a, 'b> {
+pub struct DealerAwaitingPolyCommitments<'a> {
     n: usize,
     m: usize,
-    transcript: &'a mut Transcript,
-    initial_transcript: Transcript,
-    bp_gens: &'b BulletproofGens,
-    pc_gens: &'b PedersenGens,
+    bp_gens: &'a BulletproofGens,
+    pc_gens: &'a PedersenGens,
     bit_challenge: BitChallenge,
-    bit_commitments: Vec<BitCommitment>,
     /// Aggregated commitment to the parties' bits
     A: EdwardsPoint,
     /// Aggregated commitment to the parties' bit blindings
     S: EdwardsPoint,
 }
 
-impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
+impl<'a> DealerAwaitingPolyCommitments<'a> {
     /// Receive [`PolyCommitment`]s from the parties and compute the
     /// [`PolyChallenge`].
     pub fn receive_poly_commitments(
         self,
         poly_commitments: Vec<PolyCommitment>,
-    ) -> Result<(DealerAwaitingProofShares<'a, 'b>, PolyChallenge), MPCError> {
+    ) -> Result<(DealerAwaitingProofShares<'a>, PolyChallenge), MPCError> {
         if self.m != poly_commitments.len() {
             return Err(MPCError::WrongNumPolyCommitments);
         }
@@ -200,16 +164,12 @@ impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
             DealerAwaitingProofShares {
                 n: self.n,
                 m: self.m,
-                transcript: self.transcript,
-                initial_transcript: self.initial_transcript,
                 bp_gens: self.bp_gens,
                 pc_gens: self.pc_gens,
                 bit_challenge: self.bit_challenge,
-                bit_commitments: self.bit_commitments,
                 A: self.A,
                 S: self.S,
                 poly_challenge,
-                poly_commitments,
                 T_1,
                 T_2,
             },
@@ -221,24 +181,20 @@ impl<'a, 'b> DealerAwaitingPolyCommitments<'a, 'b> {
 /// A dealer which has sent the [`PolyChallenge`] to the parties and
 /// is waiting to aggregate their [`ProofShare`]s into a
 /// [`RangeProof`].
-pub struct DealerAwaitingProofShares<'a, 'b> {
+pub struct DealerAwaitingProofShares<'b> {
     n: usize,
     m: usize,
-    transcript: &'a mut Transcript,
-    initial_transcript: Transcript,
     bp_gens: &'b BulletproofGens,
     pc_gens: &'b PedersenGens,
     bit_challenge: BitChallenge,
-    bit_commitments: Vec<BitCommitment>,
     poly_challenge: PolyChallenge,
-    poly_commitments: Vec<PolyCommitment>,
     A: EdwardsPoint,
     S: EdwardsPoint,
     T_1: EdwardsPoint,
     T_2: EdwardsPoint,
 }
 
-impl<'a, 'b> DealerAwaitingProofShares<'a, 'b> {
+impl<'a> DealerAwaitingProofShares<'a> {
     /// Assembles proof shares into an `RangeProof`.
     ///
     /// Used as a helper function by `receive_trusted_shares` (which
@@ -295,7 +251,6 @@ impl<'a, 'b> DealerAwaitingProofShares<'a, 'b> {
             .collect();
 
         let ipp_proof = inner_product_proof::InnerProductProof::create(
-            self.transcript,
             &w,
             &Q,
             &G_factors,
@@ -316,67 +271,6 @@ impl<'a, 'b> DealerAwaitingProofShares<'a, 'b> {
             e_blinding,
             ipp_proof,
         })
-    }
-
-    /// Assemble the final aggregated [`RangeProof`] from the given
-    /// `proof_shares`, then validate the proof to ensure that all
-    /// `ProofShare`s were well-formed.
-    ///
-    /// This is a convenience wrapper around receive_shares_with_rng
-    ///
-    #[cfg(feature = "std")]
-    pub fn receive_shares(self, proof_shares: &[ProofShare]) -> Result<RangeProof, MPCError> {
-        self.receive_shares_with_rng(proof_shares, &mut thread_rng())
-    }
-
-    /// Assemble the final aggregated [`RangeProof`] from the given
-    /// `proof_shares`, then validate the proof to ensure that all
-    /// `ProofShare`s were well-formed.
-    ///
-    /// If the aggregated proof fails to validate, this function
-    /// audits the submitted shares to determine which shares were
-    /// invalid.  This information is returned as part of the
-    /// [`MPCError`].
-    ///
-    /// If the proof shares are known to be trusted, for instance when
-    /// performing local aggregation,
-    /// [`receive_trusted_shares`](DealerAwaitingProofShares::receive_trusted_shares)
-    /// saves time by skipping verification of the aggregated proof.
-    pub fn receive_shares_with_rng<T: RngCore + CryptoRng>(
-        mut self,
-        proof_shares: &[ProofShare],
-        rng: &mut T,
-    ) -> Result<RangeProof, MPCError> {
-        let proof = self.assemble_shares(proof_shares)?;
-
-        let Vs: Vec<_> = self.bit_commitments.iter().map(|vc| vc.V_j).collect();
-
-        // See comment in `Dealer::new` for why we use `initial_transcript`
-        let transcript = &mut self.initial_transcript;
-        if proof
-            .verify_multiple_with_rng(self.bp_gens, self.pc_gens, transcript, &Vs, self.n, rng)
-            .is_ok()
-        {
-            Ok(proof)
-        } else {
-            // Proof verification failed. Now audit the parties:
-            let mut bad_shares = Vec::new();
-            for j in 0..self.m {
-                match proof_shares[j].audit_share(
-                    &self.bp_gens,
-                    &self.pc_gens,
-                    j,
-                    &self.bit_commitments[j],
-                    &self.bit_challenge,
-                    &self.poly_commitments[j],
-                    &self.poly_challenge,
-                ) {
-                    Ok(_) => {}
-                    Err(_) => bad_shares.push(j),
-                }
-            }
-            Err(MPCError::MalformedProofShares { bad_shares })
-        }
     }
 
     /// Assemble the final aggregated [`RangeProof`] from the given
